@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="file-details">
+    <h1>File Details: {{ file.name }}</h1>
+    
+    <div class="file-info">
+        <div class="info-section">
+            <h2>General Information</h2>
+            <table class="info-table">
+                <tr>
+                    <th>Original Filename:</th>
+                    <td>{{ file.original_filename }}</td>
+                </tr>
+                <tr>
+                    <th>File Type:</th>
+                    <td>{{ file.file_type }}</td>
+                </tr>
+                <tr>
+                    <th>Size:</th>
+                    <td>{{ file.size_bytes|filesizeformat }}</td>
+                </tr>
+                <tr>
+                    <th>Content Type:</th>
+                    <td>{{ file.content_type }}</td>
+                </tr>
+                <tr>
+                    <th>Checksum:</th>
+                    <td><code>{{ file.checksum }}</code></td>
+                </tr>
+                <tr>
+                    <th>Upload Date:</th>
+                    <td>{{ file.upload_date }}</td>
+                </tr>
+                <tr>
+                    <th>Last Accessed:</th>
+                    <td>{{ file.last_accessed|default:"Never" }}</td>
+                </tr>
+            </table>
+        </div>
+        
+        <div class="info-section">
+            <h2>Storage Information</h2>
+            <p><strong>Total Chunks:</strong> {{ total_chunks }}</p>
+            <p><strong>Stored on Nodes:</strong> {{ unique_nodes }}</p>
+            
+            <h3>Chunk Distribution</h3>
+            <table class="chunks-table">
+                <thead>
+                    <tr>
+                        <th>Chunk #</th>
+                        <th>Size</th>
+                        <th>Node</th>
+                        <th>Is Replica</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for chunk in chunks %}
+                    <tr>
+                        <td>{{ chunk.chunk_number }}</td>
+                        <td>{{ chunk.size_bytes|filesizeformat }}</td>
+                        <td>{{ chunk.node.name }}</td>
+                        <td>{{ chunk.is_replica|yesno }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="4">No chunks found for this file.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <div class="actions">
+        <a href="{% url 'file_storage:download_file' file.id %}" class="btn btn-primary">Download File</a>
+        <a href="{% url 'file_storage:dashboard' %}" class="btn btn-secondary">Back to Dashboard</a>
+    </div>
+</div>
+
+<style>
+    .file-details {
+        max-width: 1000px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+    .file-info {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 30px;
+        margin: 30px 0;
+    }
+    .info-section {
+        background: white;
+        padding: 20px;
+        border-radius: 5px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    .info-table, .chunks-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    .info-table th, .info-table td,
+    .chunks-table th, .chunks-table td {
+        padding: 8px;
+        text-align: left;
+        border-bottom: 1px solid #eee;
+    }
+    .info-table th {
+        width: 40%;
+        font-weight: bold;
+    }
+    code {
+        font-family: monospace;
+        background: #f5f5f5;
+        padding: 2px 4px;
+        border-radius: 3px;
+        font-size: 0.9em;
+    }
+    .actions {
+        margin-top: 30px;
+    }
+    .btn {
+        display: inline-block;
+        padding: 8px 16px;
+        text-decoration: none;
+        border-radius: 4px;
+        font-weight: bold;
+    }
+    .btn-primary {
+        background: #007bff;
+        color: white;
+    }
+    .btn-secondary {
+        background: #6c757d;
+        color: white;
+        margin-left: 10px;
+    }
+    @media (max-width: 768px) {
+        .file-info {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+{% endblock %}

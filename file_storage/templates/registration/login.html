@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="login-container">
+    <h1>Log In</h1>
+    
+    {% if form.errors %}
+    <p class="error">Your username and password didn't match. Please try again.</p>
+    {% endif %}
+    
+    <form method="post" action="{% url 'login' %}">
+        {% csrf_token %}
+        <div class="form-group">
+            <label for="id_username">Username:</label>
+            <input type="text" name="username" autofocus autocapitalize="none" autocomplete="username" maxlength="150" required id="id_username">
+        </div>
+        <div class="form-group">
+            <label for="id_password">Password:</label>
+            <input type="password" name="password" autocomplete="current-password" required id="id_password">
+        </div>
+        <button type="submit" class="btn btn-primary">Log In</button>
+        <input type="hidden" name="next" value="{{ next }}">
+    </form>
+</div>
+
+<style>
+    .login-container {
+        max-width: 400px;
+        margin: 100px auto;
+        background: white;
+        padding: 30px;
+        border-radius: 5px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    .form-group {
+        margin-bottom: 20px;
+    }
+    .form-group label {
+        display: block;
+        margin-bottom: 5px;
+    }
+    .form-group input {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 3px;
+    }
+    .error {
+        color: #721c24;
+        background-color: #f8d7da;
+        padding: 10px;
+        border-radius: 3px;
+        margin-bottom: 20px;
+    }
+</style>
+{% endblock %}
