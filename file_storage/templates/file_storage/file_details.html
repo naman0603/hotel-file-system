@@ -52,6 +52,7 @@
                         <th>Size</th>
                         <th>Node</th>
                         <th>Is Replica</th>
+                        <th>Status</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -61,17 +62,22 @@
                         <td>{{ chunk.size_bytes|filesizeformat }}</td>
                         <td>{{ chunk.node.name }}</td>
                         <td>{{ chunk.is_replica|yesno }}</td>
+                        <td>
+                            <span class="status-badge status-{{ chunk.status }}">
+                                {{ chunk.get_status_display }}
+                            </span>
+                        </td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="4">No chunks found for this file.</td>
+                        <td colspan="5">No chunks found for this file.</td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
     </div>
-    
+
     <div class="actions">
         <a href="{% url 'file_storage:download_file' file.id %}" class="btn btn-primary">Download File</a>
         <a href="{% url 'file_storage:dashboard' %}" class="btn btn-secondary">Back to Dashboard</a>
@@ -110,6 +116,10 @@
         width: 40%;
         font-weight: bold;
     }
+    .chunks-table th {
+        background-color: #f8f9fa;
+        border-bottom: 2px solid #ddd;
+    }
     code {
         font-family: monospace;
         background: #f5f5f5;
@@ -135,6 +145,25 @@
         background: #6c757d;
         color: white;
         margin-left: 10px;
+    }
+    .status-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 0.8em;
+        font-weight: bold;
+    }
+    .status-uploaded {
+        background-color: #d4edda;
+        color: #155724;
+    }
+    .status-pending, .status-uploading {
+        background-color: #fff3cd;
+        color: #856404;
+    }
+    .status-failed, .status-corrupt {
+        background-color: #f8d7da;
+        color: #721c24;
     }
     @media (max-width: 768px) {
         .file-info {
