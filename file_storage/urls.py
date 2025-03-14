@@ -15,6 +15,10 @@ urlpatterns = [
     path('health/', views.health_dashboard, name='health_dashboard'),
     path('repair/<str:file_id>/', views.repair_file, name='repair_file'),
 
+    # New analytics and caching routes
+    path('analytics/', views.analytics_dashboard, name='analytics_dashboard'),
+    path('cache/<uuid:file_id>/', views.cache_file, name='cache_file'),
+
     # API endpoints
     path('api/nodes/', api.get_node_status, name='get_node_status'),
     path('api/nodes/<int:node_id>/status/', api.update_node_status, name='update_node_status'),

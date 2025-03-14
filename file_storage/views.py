@@ -1,27 +1,24 @@
-import os
 import hashlib
-from django.shortcuts import render, redirect
-from django.contrib.auth.decorators import login_required
-from django.http import JsonResponse, FileResponse, Http404
-from django.core.files.storage import default_storage
+import os
+import uuid
+
 from django.contrib import messages
-from django.utils import timezone
-from .models import StoredFile, FileChunk, FileNode, ChunkStatus
-from .forms import FileUploadForm
-from .utils import FileChunker
-from django.http import JsonResponse, StreamingHttpResponse
-from django.core.exceptions import ValidationError
+from django.contrib.auth.decorators import login_required
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
+from django.db.models import Count
+from django.http import FileResponse, Http404
+from django.http import JsonResponse
 # Add these imports to your existing views.py
 from django.shortcuts import render, redirect, get_object_or_404
-from django.contrib.auth.decorators import login_required
-from django.contrib import messages
-from django.http import Http404
-from django.core.files.storage import default_storage
-from django.core.files.base import ContentFile
+from django.utils import timezone
+
+from .forms import FileUploadForm
 from .health import SystemHealth
+from .models import StoredFile, FileChunk, FileNode, ChunkStatus
 from .redundancy import RedundancyManager
-import hashlib
-import uuid
+from .retrieval import FileCache
+from .utils import FileChunker
 
 
 # Add these new views to your views.py file
@@ -319,3 +316,118 @@ def file_details(request, file_id):
 
     except StoredFile.DoesNotExist:
         raise Http404("File not found")
+
+
+@login_required
+def download_file(request, file_id):
+    """Download a file using optimized retrieval"""
+    try:
+        # Get the file
+        stored_file = StoredFile.objects.get(id=file_id, uploader=request.user)
+
+        # Update last accessed time
+        stored_file.last_accessed = timezone.now()
+        stored_file.save()
+
+        # Check cache first
+        cached_file = FileCache.get_cached_file(file_id)
+        if cached_file:
+            response = FileResponse(
+                cached_file,
+                as_attachment=True,
+                filename=stored_file.original_filename
+            )
+            return response
+
+        # If not cached, reassemble from chunks
+        # Using enhanced chunker with NodeSelector
+        chunker = FileChunker()
+        reassembled_file = chunker.reassemble_file_optimized(stored_file)
+
+        # Cache the file for future retrievals
+        FileCache.cache_file(file_id, reassembled_file.read())
+        reassembled_file.seek(0)  # Reset file pointer after reading
+
+        # Create response
+        response = FileResponse(
+            reassembled_file,
+            as_attachment=True,
+            filename=stored_file.original_filename
+        )
+        return response
+
+    except StoredFile.DoesNotExist:
+        raise Http404("File not found")
+    except Exception as e:
+        messages.error(request, f"Error downloading file: {str(e)}")
+        return redirect('file_storage:dashboard')
+
+
+@login_required
+def analytics_dashboard(request):
+    """Dashboard for viewing file access analytics"""
+    # Get user's files
+    files = StoredFile.objects.filter(uploader=request.user).order_by('-last_accessed')
+
+    # Get access statistics (in a real implementation, these would come from a database)
+    file_stats = []
+    for file in files:
+        # Get cache status
+        is_cached = FileCache.is_file_cached(file.id)
+        access_count = FileCache.get_access_count(file.id)
+
+        # Get node distribution information
+        node_distribution = (
+            FileChunk.objects.filter(file=file, is_replica=False)
+            .values('node__name')
+            .annotate(count=Count('id'))
+            .order_by('-count')
+        )
+
+        # Calculate size distribution
+        total_size = file.size_bytes
+        chunk_count = FileChunk.objects.filter(file=file, is_replica=False).count()
+        avg_chunk_size = total_size / chunk_count if chunk_count else 0
+
+        file_stats.append({
+            'file': file,
+            'is_cached': is_cached,
+            'access_count': access_count,
+            'last_accessed': file.last_accessed,
+            'node_distribution': node_distribution,
+            'chunk_count': chunk_count,
+            'avg_chunk_size': avg_chunk_size
+        })
+
+    context = {
+        'file_stats': file_stats,
+        'total_files': len(file_stats),
+        'cached_files': sum(1 for stat in file_stats if stat['is_cached'])
+    }
+
+    return render(request, 'file_storage/analytics_dashboard.html', context)
+
+
+@login_required
+def cache_file(request, file_id):
+    """Cache a specific file for faster access"""
+    try:
+        stored_file = get_object_or_404(StoredFile, id=file_id, uploader=request.user)
+
+        # Check if already cached
+        if FileCache.is_file_cached(file_id):
+            messages.info(request, f'File "{stored_file.name}" is already cached.')
+            return redirect('file_storage:analytics_dashboard')
+
+        # Reassemble and cache
+        chunker = FileChunker()
+        reassembled_file = chunker.reassemble_file_optimized(stored_file)
+
+        FileCache.cache_file(file_id, reassembled_file.read())
+
+        messages.success(request, f'File "{stored_file.name}" has been cached for faster access.')
+
+    except Exception as e:
+        messages.error(request, f"Error caching file: {str(e)}")
+
+    return redirect('file_storage:analytics_dashboard')

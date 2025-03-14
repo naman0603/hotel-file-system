@@ -200,6 +200,86 @@ class FileChunker:
         buffer.seek(0)
         return buffer
 
+    def reassemble_file_optimized(self, stored_file):
+        """
+        Reassemble a file from its chunks with optimized node selection
+
+        Args:
+            stored_file: StoredFile model instance
+
+        Returns:
+            file-like object with the reassembled file
+        """
+        from io import BytesIO
+        from .retrieval import NodeSelector
+
+        # Create a buffer to hold the reassembled file
+        buffer = BytesIO()
+
+        # Get all chunk numbers for this file
+        chunk_numbers = FileChunk.objects.filter(
+            file=stored_file,
+            status=ChunkStatus.UPLOADED
+        ).values_list('chunk_number', flat=True).distinct().order_by('chunk_number')
+
+        if not chunk_numbers:
+            logger.error(f"No chunks found for file {stored_file.id}")
+            raise ReassemblyError("No chunks found for this file")
+
+        # Expected chunk numbers
+        expected_numbers = list(range(1, max(chunk_numbers) + 1))
+
+        # Check for missing chunks
+        missing = set(expected_numbers) - set(chunk_numbers)
+        if missing:
+            logger.error(f"Missing chunks for file {stored_file.id}: {missing}")
+            raise ReassemblyError(f"Missing chunks {missing}")
+
+        # Reassemble the file by optimally retrieving each chunk
+        for chunk_number in expected_numbers:
+            chunk, node = NodeSelector.select_node_for_retrieval(stored_file.id, chunk_number)
+
+            if not chunk:
+                logger.error(f"Failed to find valid chunk {chunk_number} for file {stored_file.id}")
+                raise ReassemblyError(f"Failed to retrieve chunk {chunk_number}")
+
+            try:
+                with default_storage.open(chunk.storage_path, 'rb') as f:
+                    chunk_data = f.read()
+
+                # Verify chunk integrity
+                chunk_hash = hashlib.sha256(chunk_data).hexdigest()
+                if chunk_hash != chunk.checksum:
+                    logger.warning(f"Checksum mismatch for chunk {chunk.id} from node {node.name}")
+
+                    # Try to get from another node
+                    alternative_chunk = FileChunk.objects.filter(
+                        file=stored_file,
+                        chunk_number=chunk_number,
+                        status=ChunkStatus.UPLOADED
+                    ).exclude(id=chunk.id).first()
+
+                    if alternative_chunk:
+                        with default_storage.open(alternative_chunk.storage_path, 'rb') as f:
+                            chunk_data = f.read()
+
+                        # Verify again
+                        alt_hash = hashlib.sha256(chunk_data).hexdigest()
+                        if alt_hash != alternative_chunk.checksum:
+                            raise ReassemblyError(f"All copies of chunk {chunk_number} are corrupted")
+                    else:
+                        raise ReassemblyError(f"Chunk {chunk_number} is corrupted and no alternatives found")
+
+                buffer.write(chunk_data)
+
+            except IOError as e:
+                logger.error(f"IO error reading chunk {chunk.id} from node {node.name}: {str(e)}")
+                raise ReassemblyError(f"Failed to read chunk {chunk_number}")
+
+        # Reset buffer position for reading
+        buffer.seek(0)
+        return buffer
+
     def _recover_missing_chunks(self, stored_file, missing_numbers):
         """Attempt to recover missing chunks from replicas"""
         all_recovered = True
