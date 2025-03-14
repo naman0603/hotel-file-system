@@ -38,11 +38,11 @@
                     <p class="node-status">Status: {{ node.status|title }}</p>
                     <p class="node-health">Health: {{ node.health_status|title }}</p>
                     <div class="health-meter">
-                        <div class="meter-fill" style="width: {{ node.chunks.health_percentage }}%"></div>
+                        <div class="meter-fill health-percentage-{{ node.chunks.health_percentage|floatformat:'0' }}"></div>
                     </div>
                     <p class="chunks-count">Chunks: {{ node.chunks.total }}</p>
                     {% if node.chunks.corrupt > 0 or node.chunks.failed > 0 %}
-                        <p class="error-count">Issues: {{ node.chunks.corrupt|add.node.chunks.failed }}</p>
+                        <p class="error-count">Issues: {{ node.chunks.corrupt|add:node.chunks.failed }}</p>
                     {% endif %}
                 </div>
             {% empty %}

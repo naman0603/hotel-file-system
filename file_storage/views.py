@@ -38,6 +38,9 @@ def health_dashboard(request):
     # Get user files with health issues
     files = StoredFile.objects.filter(uploader=request.user)
     files_health = [SystemHealth.get_file_health(f) for f in files]
+
+    # Filter out None values before trying to access their keys
+    files_health = [f for f in files_health if f is not None]
     files_with_issues = [f for f in files_health if f['health_status'] != 'healthy']
 
     context = {
@@ -47,7 +50,6 @@ def health_dashboard(request):
     }
 
     return render(request, 'file_storage/health_dashboard.html', context)
-
 
 @login_required
 def repair_file(request, file_id):
