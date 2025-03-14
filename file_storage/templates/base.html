@@ -28,9 +28,16 @@
             color: #007bff;
             text-decoration: none;
         }
+
         .nav-link:hover {
             text-decoration: underline;
         }
+
+        .nav-links {
+            display: flex;
+            gap: 20px;
+        }
+
         .dashboard {
             max-width: 1200px;
             margin: 0 auto;
@@ -105,6 +112,10 @@
                 <a href="{% url 'login' %}" class="nav-link">Log In</a>
             {% endif %}
         </div>
+        <div class="nav-links">
+        <a href="{% url 'file_storage:dashboard' %}" class="nav-link">Dashboard</a>
+        <a href="{% url 'file_storage:health_dashboard' %}" class="nav-link">Health Monitor</a>
+    </div>
     </header>
 
     <main>
