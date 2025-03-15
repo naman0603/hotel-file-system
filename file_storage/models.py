@@ -4,22 +4,35 @@ from django.db import models
 from django.contrib.auth.models import User
 import uuid
 
+
+# Update in file_storage/models.py
 class FileNode(models.Model):
     """Represents a storage node in the distributed system"""
     name = models.CharField(max_length=100)
     hostname = models.CharField(max_length=255)
     port = models.IntegerField(default=9000)
+    console_port = models.IntegerField(default=9001)
+    access_key = models.CharField(max_length=255, default='minioadmin')
+    secret_key = models.CharField(max_length=255, default='minioadmin')
+    bucket_name = models.CharField(max_length=255, default='hotel-files')
     status = models.CharField(max_length=20,
                               choices=[('active', 'Active'),
                                        ('inactive', 'Inactive'),
                                        ('maintenance', 'Maintenance')],
                               default='active')
+    is_primary = models.BooleanField(default=False)
+    priority = models.IntegerField(default=0)  # Lower values mean higher priority
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"{self.name} ({self.hostname}:{self.port})"
 
+    def save(self, *args, **kwargs):
+        # Ensure only one primary node exists
+        if self.is_primary:
+            FileNode.objects.filter(is_primary=True).exclude(id=self.id).update(is_primary=False)
+        super().save(*args, **kwargs)
 
 class StoredFile(models.Model):
     """Metadata for files stored in the system"""

@@ -3,34 +3,186 @@ import os
 import uuid
 
 from django.contrib import messages
-from django.contrib.auth.decorators import login_required
+from django.contrib.auth import logout
+from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
-from django.db.models import Count
+from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
+from django.db.models import Count, Sum
+from django.db.models import Q
 from django.http import FileResponse, Http404
 from django.http import JsonResponse
-# Add these imports to your existing views.py
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 
 from .forms import FileUploadForm
 from .health import SystemHealth
-from .models import StoredFile, FileChunk, FileNode, ChunkStatus
+from .models import FileNode, FileChunk, StoredFile, ChunkStatus
+from .node_manager import NodeManager
 from .redundancy import RedundancyManager
 from .retrieval import FileCache
 from .utils import FileChunker
 
-from django.shortcuts import render, redirect, get_object_or_404
-from django.contrib.auth.decorators import login_required
-from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
-from django.db.models import Q, Count
-from .models import StoredFile, FileChunk, FileNode, ChunkStatus
-from .retrieval import FileCache
-from django.contrib.auth import logout
-from django.shortcuts import redirect
+
+@login_required
+@user_passes_test(lambda u: u.is_staff)
+def distributed_dashboard(request):
+    """Dashboard for monitoring the distributed system"""
+    # Get all nodes with health information
+    nodes = FileNode.objects.all().order_by('priority')
+    node_data = []
+
+    for node in nodes:
+        # Get health information
+        health_status = "healthy"
+        health_percentage = 100
+
+        if node.status != 'active':
+            health_status = "inactive"
+            health_percentage = 0
+        elif not NodeManager.check_node_availability(node):
+            health_status = "critical"
+            health_percentage = 0
+        else:
+            # Count chunks on this node
+            total_chunks = node.stored_chunks.count()
+            corrupt_chunks = node.stored_chunks.filter(status=ChunkStatus.CORRUPT).count()
+            failed_chunks = node.stored_chunks.filter(status=ChunkStatus.FAILED).count()
+
+            if total_chunks > 0:
+                healthy_percentage = ((total_chunks - corrupt_chunks - failed_chunks) / total_chunks) * 100
+                health_percentage = round(healthy_percentage)
+
+                if healthy_percentage < 80:
+                    health_status = "critical"
+                elif healthy_percentage < 95:
+                    health_status = "warning"
+
+        # Calculate space used
+        space_used = node.stored_chunks.aggregate(total=Sum('size_bytes'))['total'] or 0
+
+        node_data.append({
+            'id': node.id,
+            'name': node.name,
+            'hostname': node.hostname,
+            'port': node.port,
+            'status': node.status,
+            'is_primary': node.is_primary,
+            'priority': node.priority,
+            'health_status': health_status,
+            'health_percentage': health_percentage,
+            'chunk_count': node.stored_chunks.count(),
+            'space_used': space_used
+        })
+
+    # Get cluster status information
+    total_nodes = len(nodes)
+    active_nodes = sum(1 for n in node_data if n['status'] == 'active' and n['health_status'] != 'critical')
+
+    cluster_status = {
+        'total_nodes': total_nodes,
+        'active_nodes': active_nodes,
+        'status': 'critical' if active_nodes < total_nodes / 2 else 'warning' if active_nodes < total_nodes else 'healthy'
+    }
+
+    # Get primary node
+    primary_node = FileNode.objects.filter(is_primary=True).first()
+    if not primary_node:
+        primary_node = NodeManager.get_primary_node()
+
+    # Get replication information
+    original_chunks = FileChunk.objects.filter(is_replica=False).count()
+    replica_chunks = FileChunk.objects.filter(is_replica=True).count()
+
+    replication_factor = round(replica_chunks / original_chunks, 1) if original_chunks > 0 else 0
+
+    # Get files with replication issues
+    files_with_issues = 0
+    files_needing_replication = []
+
+    for stored_file in StoredFile.objects.all():
+        file_chunks = FileChunk.objects.filter(file=stored_file, is_replica=False)
+
+        for chunk in file_chunks:
+            replicas = FileChunk.objects.filter(
+                file=stored_file,
+                chunk_number=chunk.chunk_number,
+                is_replica=True,
+                status=ChunkStatus.UPLOADED
+            ).count()
+
+            if replicas < 1:  # We want at least 1 replica per chunk
+                files_with_issues += 1
+                files_needing_replication.append({
+                    'id': stored_file.id,
+                    'name': stored_file.name,
+                    'missing_replicas': 1 - replicas
+                })
+                break
+
+    context = {
+        'nodes': node_data,
+        'cluster_status': cluster_status,
+        'primary_node': primary_node,
+        'original_chunks': original_chunks,
+        'replica_chunks': replica_chunks,
+        'replication_factor': replication_factor,
+        'files_with_issues': files_with_issues,
+        'files_needing_replication': files_needing_replication,
+    }
+
+    return render(request, 'file_storage/distributed_dashboard.html', context)
 
 
-# Add these new views to your views.py file
+@login_required
+@user_passes_test(lambda u: u.is_staff)
+def change_node_status(request, node_id):
+    """Change a node's status"""
+    if request.method == 'POST':
+        node = get_object_or_404(FileNode, id=node_id)
+        status = request.POST.get('status')
+
+        if status in ['active', 'inactive', 'maintenance']:
+            old_status = node.status
+            node.status = status
+            node.save()
+
+            messages.success(request, f"Node '{node.name}' status changed from '{old_status}' to '{status}'.")
+
+            # If this was the primary node being deactivated, elect a new primary
+            if old_status == 'active' and status != 'active' and node.is_primary:
+                new_primary = NodeManager.get_primary_node()
+                if new_primary:
+                    messages.info(request, f"Node '{new_primary.name}' is now the primary node.")
+        else:
+            messages.error(request, f"Invalid status: {status}")
+
+    return redirect('file_storage:distributed_dashboard')
+
+
+@login_required
+@user_passes_test(lambda u: u.is_staff)
+def replicate_file(request, file_id):
+    """Create replicas for a file"""
+    if request.method == 'POST':
+        stored_file = get_object_or_404(StoredFile, id=file_id)
+
+        redundancy_manager = RedundancyManager(min_replicas=1)
+        chunks = FileChunk.objects.filter(file=stored_file, is_replica=False)
+
+        replicas_created = 0
+        for chunk in chunks:
+            replicas = redundancy_manager.create_replicas_for_chunk(chunk)
+            replicas_created += replicas
+
+        if replicas_created > 0:
+            messages.success(request, f"Created {replicas_created} replicas for file '{stored_file.name}'.")
+        else:
+            messages.warning(request,
+                             f"No new replicas created for file '{stored_file.name}'. Check node availability.")
+
+    return redirect('file_storage:distributed_dashboard')
+
 @login_required
 def health_dashboard(request):
     """View for monitoring system health"""

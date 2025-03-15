@@ -1,0 +1,327 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="distributed-dashboard">
+    <h1>Distributed System Status</h1>
+
+    <div class="cluster-status">
+        <div class="status-card status-{{ cluster_status.status }}">
+            <h2>Cluster Status: {{ cluster_status.status|title }}</h2>
+            <div class="status-details">
+                <div class="detail-item">
+                    <span class="label">Active Nodes:</span>
+                    <span class="value">{{ cluster_status.active_nodes }} / {{ cluster_status.total_nodes }}</span>
+                </div>
+                <div class="detail-item">
+                    <span class="label">Primary Node:</span>
+                    <span class="value">{{ primary_node.name }}</span>
+                </div>
+                <div class="detail-item">
+                    <span class="label">Replication Factor:</span>
+                    <span class="value">{{ replication_factor }}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="nodes-section">
+        <h2>Storage Nodes</h2>
+        <div class="node-grid">
+            {% for node in nodes %}
+            <div class="node-card node-{{ node.status }} {% if node.is_primary %}node-primary{% endif %}">
+                <div class="node-header">
+                    <h3>{{ node.name }}</h3>
+                    <div class="node-badges">
+                        <span class="status-badge status-{{ node.status }}">{{ node.status|title }}</span>
+                        {% if node.is_primary %}
+                        <span class="status-badge status-primary">Primary</span>
+                        {% endif %}
+                        <span class="status-badge status-{{ node.health_status }}">{{ node.health_status|title }}</span>
+                    </div>
+                </div>
+
+                <div class="node-details">
+                    <p><strong>Hostname:</strong> {{ node.hostname }}:{{ node.port }}</p>
+                    <p><strong>Priority:</strong> {{ node.priority }}</p>
+                    <p><strong>Chunks:</strong> {{ node.chunk_count }}</p>
+                    <p><strong>Space Used:</strong> {{ node.space_used|filesizeformat }}</p>
+                </div>
+
+                <div class="node-health">
+                    <div class="health-bar">
+                        <div class="health-fill width-{{ node.health_percentage }}"></div>
+                    </div>
+                    <div class="health-text">Health: {{ node.health_percentage }}%</div>
+                </div>
+
+                <div class="node-actions">
+                    <form method="post" action="{% url 'file_storage:change_node_status' node.id %}">
+                        {% csrf_token %}
+                        {% if node.status != 'active' %}
+                        <input type="hidden" name="status" value="active">
+                        <button type="submit" class="btn btn-sm btn-success">Activate</button>
+                        {% endif %}
+
+                        {% if node.status != 'maintenance' %}
+                        <input type="hidden" name="status" value="maintenance">
+                        <button type="submit" class="btn btn-sm btn-warning">Maintenance</button>
+                        {% endif %}
+
+                        {% if node.status != 'inactive' %}
+                        <input type="hidden" name="status" value="inactive">
+                        <button type="submit" class="btn btn-sm btn-danger">Deactivate</button>
+                        {% endif %}
+                    </form>
+                </div>
+            </div>
+            {% empty %}
+            <p>No storage nodes configured.</p>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="replication-section">
+        <h2>Replication Overview</h2>
+        <div class="replication-stats">
+            <div class="stat-card">
+                <h3>Original Chunks</h3>
+                <div class="stat-value">{{ original_chunks }}</div>
+            </div>
+            <div class="stat-card">
+                <h3>Replica Chunks</h3>
+                <div class="stat-value">{{ replica_chunks }}</div>
+            </div>
+            <div class="stat-card">
+                <h3>Replication Factor</h3>
+                <div class="stat-value">{{ replication_factor }}</div>
+            </div>
+            <div class="stat-card">
+                <h3>Files with Issues</h3>
+                <div class="stat-value">{{ files_with_issues }}</div>
+            </div>
+        </div>
+
+        {% if files_needing_replication %}
+        <div class="replication-issues">
+            <h3>Files Needing Additional Replication</h3>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>File</th>
+                        <th>Missing Replicas</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for file in files_needing_replication %}
+                    <tr>
+                        <td>{{ file.name }}</td>
+                        <td>{{ file.missing_replicas }}</td>
+                        <td>
+                            <form method="post" action="{% url 'file_storage:replicate_file' file.id %}">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-sm btn-primary">
+                                    Replicate
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<style>
+    .distributed-dashboard {
+        max-width: 1200px;
+        margin: 0 auto;
+    }
+    .cluster-status {
+        margin-bottom: 30px;
+    }
+    .status-card {
+        padding: 20px;
+        border-radius: 5px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    .status-healthy, .status-active {
+        background-color: #d4edda;
+        border-left: 5px solid #28a745;
+    }
+    .status-warning, .status-maintenance {
+        background-color: #fff3cd;
+        border-left: 5px solid #ffc107;
+    }
+    .status-critical, .status-inactive {
+        background-color: #f8d7da;
+        border-left: 5px solid #dc3545;
+    }
+    .status-primary {
+        background-color: #cce5ff;
+        border-left: 5px solid #007bff;
+    }
+    .status-details {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 20px;
+        margin-top: 15px;
+    }
+    .detail-item {
+        flex: 1;
+        min-width: 200px;
+    }
+    .detail-item .label {
+        font-weight: bold;
+        display: block;
+    }
+    .detail-item .value {
+        font-size: 1.2em;
+    }
+    .nodes-section, .replication-section {
+        background: white;
+        padding: 20px;
+        border-radius: 5px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        margin-bottom: 30px;
+    }
+    .node-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+        gap: 20px;
+        margin-top: 20px;
+    }
+    .node-card {
+        padding: 15px;
+        border-radius: 5px;
+        background-color: white;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    .node-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+    }
+    .node-badges {
+        display: flex;
+        gap: 5px;
+    }
+    .status-badge {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: 12px;
+        font-size: 0.8em;
+        font-weight: bold;
+    }
+    .node-primary {
+        border-top: 3px solid #007bff;
+    }
+    .node-details {
+        margin-bottom: 15px;
+    }
+    .node-details p {
+        margin: 5px 0;
+    }
+    .node-health {
+        margin-bottom: 15px;
+    }
+    .health-bar {
+        height: 8px;
+        background-color: #e9ecef;
+        border-radius: 4px;
+        margin-bottom: 5px;
+        overflow: hidden;
+    }
+    .health-fill {
+        height: 100%;
+        background-color: #28a745;
+        border-radius: 4px;
+    }
+    .health-text {
+        font-size: 0.9em;
+        color: #6c757d;
+    }
+    .node-actions {
+        display: flex;
+        gap: 10px;
+    }
+    .replication-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+    .stat-card {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 5px;
+        text-align: center;
+    }
+    .stat-card h3 {
+        margin-top: 0;
+        margin-bottom: 10px;
+        font-size: 1.1rem;
+    }
+    .stat-value {
+        font-size: 2rem;
+        font-weight: bold;
+        color: #007bff;
+    }
+    .table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    .table th, .table td {
+        padding: 10px;
+        text-align: left;
+        border-bottom: 1px solid #dee2e6;
+    }
+    .table th {
+        background-color: #f8f9fa;
+    }
+    .btn {
+        display: inline-block;
+        padding: 5px 10px;
+        border-radius: 3px;
+        text-decoration: none;
+        cursor: pointer;
+        border: none;
+    }
+    .btn-sm {
+        padding: 3px 8px;
+        font-size: 0.875rem;
+    }
+    .btn-primary {
+        background-color: #007bff;
+        color: white;
+    }
+    .btn-success {
+        background-color: #28a745;
+        color: white;
+    }
+    .btn-warning {
+        background-color: #ffc107;
+        color: #212529;
+    }
+    .btn-danger {
+        background-color: #dc3545;
+        color: white;
+    }
+
+    /* Width classes for health bars */
+    .width-0 { width: 0%; }
+    .width-10 { width: 10%; }
+    .width-20 { width: 20%; }
+    .width-30 { width: 30%; }
+    .width-40 { width: 40%; }
+    .width-50 { width: 50%; }
+    .width-60 { width: 60%; }
+    .width-70 { width: 70%; }
+    .width-80 { width: 80%; }
+    .width-90 { width: 90%; }
+    .width-100 { width: 100%; }
+</style>
+{% endblock %}

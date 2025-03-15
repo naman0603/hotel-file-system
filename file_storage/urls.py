@@ -41,5 +41,6 @@ urlpatterns = [
     path('files/', views.file_list, name='file_list'),
     path('files/<uuid:file_id>/', views.enhanced_file_details, name='enhanced_file_details'),
     path('accounts/logout/', views.logout_view, name='logout'),
+    path('distributed/', views.distributed_dashboard, name='distributed_dashboard'),
 
 ]

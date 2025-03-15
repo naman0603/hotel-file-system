@@ -6,6 +6,9 @@ from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from django.db import transaction
 from .models import StoredFile, FileChunk, FileNode, ChunkStatus
+from .node_manager import NodeManager
+from minio import Minio
+from minio.error import S3Error
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +32,7 @@ class FileChunker:
     @transaction.atomic
     def chunk_file(self, file_obj, stored_file, user):
         """
-        Split a file into chunks and store them with transaction support
+        Split a file into chunks and store them across multiple nodes
 
         Args:
             file_obj: The uploaded file object
@@ -46,7 +49,7 @@ class FileChunker:
         file_obj.seek(0)
 
         # Get active storage nodes
-        nodes = list(FileNode.objects.filter(status='active'))
+        nodes = NodeManager.get_active_nodes()
         if not nodes:
             logger.error("No active storage nodes available")
             raise ChunkingError("No active storage nodes available for storing file chunks")
@@ -69,16 +72,26 @@ class FileChunker:
                 # Calculate checksum for this chunk
                 chunk_hash = hashlib.sha256(chunk_data).hexdigest()
 
-                # Select a node (simple round-robin)
-                node = nodes[(chunk_number - 1) % len(nodes)]
+                # Select best node for this chunk
+                node = NodeManager.elect_best_node_for_upload()
+                if not node:
+                    raise ChunkingError("No available nodes to store chunk")
 
-                # Generate a unique filename for this chunk
-                chunk_filename = f"{stored_file.id}_{chunk_number}_{uuid.uuid4().hex}.chunk"
-                storage_path = f"chunks/{user.username}/{chunk_filename}"
+                # Create a unique object name for this chunk
+                object_name = f"chunks/{user.username}/{stored_file.id}_{chunk_number}_{uuid.uuid4().hex}.chunk"
 
                 try:
-                    # Store the chunk
-                    default_storage.save(storage_path, ContentFile(chunk_data))
+                    # Get MinIO client for the selected node
+                    client = NodeManager.get_node_client(node)
+
+                    # Upload chunk to MinIO
+                    from io import BytesIO
+                    client.put_object(
+                        bucket_name=node.bucket_name,
+                        object_name=object_name,
+                        data=BytesIO(chunk_data),
+                        length=len(chunk_data)
+                    )
 
                     # Create chunk record
                     chunk = FileChunk.objects.create(
@@ -86,7 +99,7 @@ class FileChunker:
                         chunk_number=chunk_number,
                         size_bytes=len(chunk_data),
                         checksum=chunk_hash,
-                        storage_path=storage_path,
+                        storage_path=object_name,
                         node=node,
                         status=ChunkStatus.UPLOADED
                     )
@@ -94,13 +107,49 @@ class FileChunker:
                     chunks.append(chunk)
                     chunk_number += 1
                     position += len(chunk_data)
-                    logger.info(f"Chunk {chunk_number - 1} uploaded successfully for file {stored_file.id}")
+                    logger.info(f"Chunk {chunk_number - 1} uploaded to node {node.name} for file {stored_file.id}")
 
                 except Exception as e:
-                    logger.error(f"Error uploading chunk {chunk_number} for file {stored_file.id}: {str(e)}")
-                    # Roll back if there's an error
-                    transaction.savepoint_rollback(sid)
-                    raise ChunkingError(f"Failed to store chunk {chunk_number}: {str(e)}")
+                    logger.error(f"Error uploading chunk {chunk_number} to node {node.name}: {str(e)}")
+
+                    # Try another node
+                    alternative_nodes = [n for n in nodes if n.id != node.id]
+                    if alternative_nodes:
+                        try:
+                            alt_node = alternative_nodes[0]
+                            alt_client = NodeManager.get_node_client(alt_node)
+
+                            # Upload to alternative node
+                            alt_client.put_object(
+                                bucket_name=alt_node.bucket_name,
+                                object_name=object_name,
+                                data=BytesIO(chunk_data),
+                                length=len(chunk_data)
+                            )
+
+                            # Create chunk record
+                            chunk = FileChunk.objects.create(
+                                file=stored_file,
+                                chunk_number=chunk_number,
+                                size_bytes=len(chunk_data),
+                                checksum=chunk_hash,
+                                storage_path=object_name,
+                                node=alt_node,
+                                status=ChunkStatus.UPLOADED
+                            )
+
+                            chunks.append(chunk)
+                            chunk_number += 1
+                            position += len(chunk_data)
+                            logger.info(f"Chunk {chunk_number - 1} uploaded to alternative node {alt_node.name}")
+
+                        except Exception as alt_error:
+                            logger.error(f"Error uploading to alternative node: {str(alt_error)}")
+                            transaction.savepoint_rollback(sid)
+                            raise ChunkingError(f"Failed to store chunk {chunk_number} on any available node")
+                    else:
+                        transaction.savepoint_rollback(sid)
+                        raise ChunkingError(f"No alternative nodes available for chunk {chunk_number}")
 
             # Commit the transaction
             transaction.savepoint_commit(sid)
@@ -114,7 +163,6 @@ class FileChunker:
             # Clean up any created files
             self._cleanup_partial_upload(chunks)
             raise ChunkingError(f"File chunking failed: {str(e)}")
-
     def _cleanup_partial_upload(self, chunks):
         """Clean up storage after a failed upload"""
         for chunk in chunks:
@@ -127,74 +175,130 @@ class FileChunker:
             except Exception as e:
                 logger.error(f"Error cleaning up chunk {chunk.id}: {str(e)}")
 
-    def reassemble_file(self, stored_file):
+    def reassemble_file_optimized(self, stored_file):
         """
-        Reassemble a file from its chunks with error handling
+        Reassemble a file from its chunks with multiserver support
 
         Args:
             stored_file: StoredFile model instance
 
         Returns:
             file-like object with the reassembled file
-
-        Raises:
-            ReassemblyError: If reassembly process fails
         """
         from io import BytesIO
-
-        # Get all chunks ordered by chunk_number
-        chunks = stored_file.chunks.filter(status=ChunkStatus.UPLOADED).order_by('chunk_number')
-
-        if not chunks:
-            logger.error(f"No valid chunks found for file {stored_file.id}")
-            raise ReassemblyError("No valid chunks found for this file")
-
-        # Check if we have all chunks
-        chunk_numbers = [chunk.chunk_number for chunk in chunks]
-        expected_numbers = list(range(1, max(chunk_numbers) + 1))
-
-        if sorted(chunk_numbers) != expected_numbers:
-            missing = set(expected_numbers) - set(chunk_numbers)
-            logger.error(f"Missing chunks for file {stored_file.id}: {missing}")
-
-            # Try to recover from replicas
-            recovered = self._recover_missing_chunks(stored_file, missing)
-            if not recovered:
-                raise ReassemblyError(f"Missing chunks {missing} and unable to recover from replicas")
-
-            # Get updated chunks list after recovery
-            chunks = stored_file.chunks.filter(status=ChunkStatus.UPLOADED).order_by('chunk_number')
 
         # Create a buffer to hold the reassembled file
         buffer = BytesIO()
 
-        # Read each chunk and write to buffer
-        for chunk in chunks:
-            try:
-                with default_storage.open(chunk.storage_path, 'rb') as f:
-                    chunk_data = f.read()
+        # Get all chunk numbers for this file
+        chunk_numbers = FileChunk.objects.filter(
+            file=stored_file,
+            status=ChunkStatus.UPLOADED
+        ).values_list('chunk_number', flat=True).distinct().order_by('chunk_number')
 
-                # Verify chunk integrity
+        if not chunk_numbers:
+            logger.error(f"No chunks found for file {stored_file.id}")
+            raise ReassemblyError("No chunks found for this file")
+
+        # Expected chunk numbers
+        expected_numbers = list(range(1, max(chunk_numbers) + 1))
+
+        # Check for missing chunks
+        missing = set(expected_numbers) - set(chunk_numbers)
+        if missing:
+            logger.error(f"Missing chunks for file {stored_file.id}: {missing}")
+            raise ReassemblyError(f"Missing chunks {missing}")
+
+        # Reassemble the file by retrieving each chunk from the appropriate node
+        for chunk_number in expected_numbers:
+            # Find best node for this chunk
+            node = NodeManager.select_node_for_chunk(stored_file.id, chunk_number)
+            if not node:
+                logger.error(f"No available node found for chunk {chunk_number}")
+                raise ReassemblyError(f"No available node for chunk {chunk_number}")
+
+            # Get chunk details
+            chunk = FileChunk.objects.filter(
+                file=stored_file,
+                chunk_number=chunk_number,
+                node=node
+            ).first()
+
+            if not chunk:
+                logger.error(f"Chunk record not found for chunk {chunk_number} on node {node.name}")
+                raise ReassemblyError(f"Chunk {chunk_number} record not found")
+
+            try:
+                # Get MinIO client for this node
+                client = NodeManager.get_node_client(node)
+
+                # Download the chunk
+                response = client.get_object(node.bucket_name, chunk.storage_path)
+                chunk_data = response.read()
+
+                # Verify integrity
                 chunk_hash = hashlib.sha256(chunk_data).hexdigest()
                 if chunk_hash != chunk.checksum:
-                    logger.warning(f"Checksum mismatch for chunk {chunk.id}, trying replica")
+                    logger.warning(f"Checksum mismatch for chunk {chunk.id} from node {node.name}")
 
-                    # Try to find a replica
-                    chunk_data = self._get_replica_data(stored_file, chunk.chunk_number)
+                    # Try another node
+                    alt_nodes = NodeManager.get_active_nodes()
+                    alt_nodes = [n for n in alt_nodes if n.id != node.id]
+
+                    chunk_data = None
+                    for alt_node in alt_nodes:
+                        alt_chunk = FileChunk.objects.filter(
+                            file=stored_file,
+                            chunk_number=chunk_number,
+                            node=alt_node
+                        ).first()
+
+                        if alt_chunk:
+                            try:
+                                alt_client = NodeManager.get_node_client(alt_node)
+                                alt_response = alt_client.get_object(alt_node.bucket_name, alt_chunk.storage_path)
+                                alt_data = alt_response.read()
+
+                                alt_hash = hashlib.sha256(alt_data).hexdigest()
+                                if alt_hash == alt_chunk.checksum:
+                                    chunk_data = alt_data
+                                    break
+                            except Exception as alt_error:
+                                logger.error(
+                                    f"Error retrieving from alternative node {alt_node.name}: {str(alt_error)}")
+
                     if not chunk_data:
-                        raise ReassemblyError(f"Chunk {chunk.chunk_number} is corrupted and no valid replica found")
+                        raise ReassemblyError(f"All copies of chunk {chunk_number} are corrupted or unavailable")
 
                 buffer.write(chunk_data)
 
-            except IOError as e:
-                logger.error(f"IO error reading chunk {chunk.id}: {str(e)}")
+            except Exception as e:
+                logger.error(f"Error retrieving chunk {chunk_number} from node {node.name}: {str(e)}")
 
-                # Try to get data from replica
-                chunk_data = self._get_replica_data(stored_file, chunk.chunk_number)
-                if not chunk_data:
-                    raise ReassemblyError(f"Failed to read chunk {chunk.chunk_number} and no valid replica found")
+                # Try to retrieve from another node
+                try:
+                    alt_nodes = NodeManager.get_active_nodes()
+                    alt_nodes = [n for n in alt_nodes if n.id != node.id]
 
-                buffer.write(chunk_data)
+                    for alt_node in alt_nodes:
+                        alt_chunk = FileChunk.objects.filter(
+                            file=stored_file,
+                            chunk_number=chunk_number,
+                            node=alt_node
+                        ).first()
+
+                        if alt_chunk:
+                            alt_client = NodeManager.get_node_client(alt_node)
+                            alt_response = alt_client.get_object(alt_node.bucket_name, alt_chunk.storage_path)
+                            buffer.write(alt_response.read())
+                            logger.info(f"Retrieved chunk {chunk_number} from alternative node {alt_node.name}")
+                            break
+                    else:
+                        raise ReassemblyError(f"Failed to retrieve chunk {chunk_number} from any node")
+
+                except Exception as alt_error:
+                    logger.error(f"Error retrieving from any alternative node: {str(alt_error)}")
+                    raise ReassemblyError(f"Failed to retrieve chunk {chunk_number}")
 
         # Reset buffer position for reading
         buffer.seek(0)

@@ -152,3 +152,74 @@ MESSAGE_TAGS = {
     messages.WARNING: 'warning',
     messages.ERROR: 'error',
 }
+
+# Add these settings for multi-server MinIO configuration
+MINIO_STORAGE_BACKENDS = {
+    'default': {
+        'ENDPOINT': os.environ.get('MINIO_ENDPOINT', 'localhost:9001'),
+        'ACCESS_KEY': os.environ.get('MINIO_ACCESS_KEY', 'minioadmin'),
+        'SECRET_KEY': os.environ.get('MINIO_SECRET_KEY', 'minioadmin'),
+        'BUCKET_NAME': os.environ.get('MINIO_BUCKET_NAME', 'hotel-files'),
+        'SECURE': False,
+    },
+    'node1': {
+        'ENDPOINT': 'localhost:9001',
+        'ACCESS_KEY': 'minioadmin',
+        'SECRET_KEY': 'minioadmin',
+        'BUCKET_NAME': 'hotel-files',
+        'SECURE': False,
+    },
+    'node2': {
+        'ENDPOINT': 'localhost:9002',
+        'ACCESS_KEY': 'minioadmin',
+        'SECRET_KEY': 'minioadmin',
+        'BUCKET_NAME': 'hotel-files',
+        'SECURE': False,
+    },
+    'node3': {
+        'ENDPOINT': 'localhost:9003',
+        'ACCESS_KEY': 'minioadmin',
+        'SECRET_KEY': 'minioadmin',
+        'BUCKET_NAME': 'hotel-files',
+        'SECURE': False,
+    },
+}
+
+# Install the required cache configuration
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+    }
+}
+
+# Configure logging
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'level': 'INFO',
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+        'file': {
+            'level': 'INFO',
+            'class': 'logging.FileHandler',
+            'filename': os.path.join(BASE_DIR, 'distributed_storage.log'),
+            'formatter': 'verbose',
+        },
+    },
+    'loggers': {
+        'file_storage': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': True,
+        },
+    },
+}

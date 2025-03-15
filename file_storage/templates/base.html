@@ -153,6 +153,11 @@
             <a href="{% url 'file_storage:analytics_dashboard' %}" class="nav-link">
                 <i class="fas fa-chart-line"></i> Analytics
             </a>
+            {% if user.is_staff %}
+            <a href="{% url 'file_storage:distributed_dashboard' %}" class="nav-link">
+                <i class="bi bi-diagram-3"></i> Distributed System
+            </a>
+            {% endif %}
         </div>
         <div class="user-nav">
             {% if user.is_authenticated %}

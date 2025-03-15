@@ -6,6 +6,8 @@ from django.core.files.base import ContentFile
 from django.db import transaction
 from django.utils import timezone
 from .models import FileChunk, FileNode, ChunkStatus, StoredFile
+from .node_manager import NodeManager
+
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +20,7 @@ class RedundancyManager:
 
     def create_replicas_for_chunk(self, chunk, exclude_nodes=None):
         """
-        Create replicas for a specific chunk
+        Create replicas for a specific chunk across multiple servers
 
         Args:
             chunk: FileChunk instance to replicate
@@ -38,53 +40,72 @@ class RedundancyManager:
         if chunk.status != ChunkStatus.UPLOADED:
             return 0
 
+        # Add the chunk's current node to exclude list
+        if chunk.node:
+            exclude_nodes.append(chunk.node)
+
         # Get active nodes excluding specified ones
-        active_nodes = FileNode.objects.filter(status='active').exclude(id__in=[n.id for n in exclude_nodes])
+        active_nodes = FileNode.objects.filter(status='active').exclude(
+            id__in=[n.id for n in exclude_nodes]
+        )
 
         if not active_nodes:
             logger.warning(f"No active nodes available for replication of chunk {chunk.id}")
             return 0
 
-        # Choose a random node for the replica
-        try:
-            target_node = random.choice(list(active_nodes))
+        replicas_created = 0
 
-            # Read the original chunk
-            with default_storage.open(chunk.storage_path, 'rb') as f:
-                chunk_data = f.read()
+        # Create a replica on each available node, up to min_replicas
+        for node in active_nodes[:self.min_replicas]:
+            try:
+                # Get source node client
+                source_client = NodeManager.get_node_client(chunk.node)
 
-            # Verify the chunk integrity before replicating
-            chunk_hash = hashlib.sha256(chunk_data).hexdigest()
-            if chunk_hash != chunk.checksum:
-                logger.error(f"Original chunk {chunk.id} is corrupted, cannot replicate")
-                chunk.status = ChunkStatus.CORRUPT
-                chunk.save()
-                return 0
+                # Get destination node client
+                dest_client = NodeManager.get_node_client(node)
 
-            # Create a new storage path for the replica
-            replica_path = f"replicas/{chunk.file.uploader.username}/{chunk.file.id}_{chunk.chunk_number}_{target_node.id}.chunk"
+                # Create a new path for the replica
+                replica_path = f"replicas/{chunk.file.uploader.username}/{chunk.file.id}_{chunk.chunk_number}_{node.id}.chunk"
 
-            # Save the replica
-            default_storage.save(replica_path, ContentFile(chunk_data))
+                # Copy the object from source to destination
+                # First, download from source
+                response = source_client.get_object(chunk.node.bucket_name, chunk.storage_path)
+                chunk_data = response.read()
 
-            # Create replica record
-            FileChunk.objects.create(
-                file=chunk.file,
-                chunk_number=chunk.chunk_number,
-                size_bytes=chunk.size_bytes,
-                checksum=chunk.checksum,
-                storage_path=replica_path,
-                node=target_node,
-                is_replica=True,
-                status=ChunkStatus.UPLOADED
-            )
+                # Verify the source integrity
+                chunk_hash = hashlib.sha256(chunk_data).hexdigest()
+                if chunk_hash != chunk.checksum:
+                    logger.error(f"Source chunk {chunk.id} is corrupted, cannot replicate")
+                    continue
 
-            logger.info(f"Created replica for chunk {chunk.id} on node {target_node.name}")
-            return 1
+                # Upload to destination
+                from io import BytesIO
+                dest_client.put_object(
+                    bucket_name=node.bucket_name,
+                    object_name=replica_path,
+                    data=BytesIO(chunk_data),
+                    length=len(chunk_data)
+                )
 
-        except Exception as e:
-            logger.error(f"Failed to create replica for chunk {chunk.id}: {str(e)}")
-            return 0
+                # Create replica record
+                FileChunk.objects.create(
+                    file=chunk.file,
+                    chunk_number=chunk.chunk_number,
+                    size_bytes=chunk.size_bytes,
+                    checksum=chunk.checksum,
+                    storage_path=replica_path,
+                    node=node,
+                    is_replica=True,
+                    status=ChunkStatus.UPLOADED
+                )
+
+                replicas_created += 1
+                logger.info(f"Created replica for chunk {chunk.id} on node {node.name}")
+
+            except Exception as e:
+                logger.error(f"Failed to create replica on node {node.name}: {str(e)}")
+
+        return replicas_created
 
     def ensure_minimum_replicas(self):
         """
