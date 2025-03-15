@@ -1,0 +1,184 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block extrastyle %}
+<style>
+    .dashboard-container {
+        padding: 20px;
+    }
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+    .stat-card {
+        background: white;
+        border-radius: 5px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        padding: 20px;
+    }
+    .stat-card h3 {
+        margin-top: 0;
+        color: #333;
+        border-bottom: 1px solid #eee;
+        padding-bottom: 10px;
+    }
+    .stat-value {
+        font-size: 2rem;
+        font-weight: bold;
+        color: #007bff;
+    }
+    .stat-label {
+        color: #666;
+        font-size: 0.9rem;
+    }
+    .status-indicator {
+        display: inline-block;
+        height: 10px;
+        width: 10px;
+        border-radius: 50%;
+        margin-right: 5px;
+    }
+    .status-healthy {
+        background-color: #28a745;
+    }
+    .status-warning {
+        background-color: #ffc107;
+    }
+    .status-critical {
+        background-color: #dc3545;
+    }
+    .dashboard-section {
+        background: white;
+        border-radius: 5px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        padding: 20px;
+        margin-bottom: 30px;
+    }
+    .dashboard-actions {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
+    }
+    .data-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    .data-table th, .data-table td {
+        padding: 10px;
+        text-align: left;
+        border-bottom: 1px solid #eee;
+    }
+    .data-table th {
+        background-color: #f8f9fa;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+    <h1>System Monitoring Dashboard</h1>
+    
+    <div class="dashboard-actions">
+        <a href="{% url 'admin:node_management' %}" class="button">Node Management</a>
+        <a href="{% url 'admin:storage_report' %}" class="button">Storage Reports</a>
+        <a href="{% url 'admin:system_maintenance' %}" class="button">System Maintenance</a>
+    </div>
+    
+    <div class="stats-grid">
+        <div class="stat-card">
+            <h3>System Status</h3>
+            <div>
+                <span class="status-indicator status-{{ system_status.status }}"></span>
+                <span class="stat-value">{{ system_status.status|title }}</span>
+            </div>
+            <p class="stat-label">
+                Node Health: {{ system_status.nodes.health_percentage }}%<br>
+                Chunk Health: {{ system_status.chunks.health_percentage }}%
+            </p>
+        </div>
+        
+        <div class="stat-card">
+            <h3>Nodes</h3>
+            <div class="stat-value">{{ node_stats.active }} / {{ node_stats.total }}</div>
+            <p class="stat-label">Active Nodes / Total Nodes</p>
+        </div>
+        
+        <div class="stat-card">
+            <h3>Storage</h3>
+            <div class="stat-value">{{ storage_stats.total_files }}</div>
+            <p class="stat-label">Total Files ({{ storage_stats.total_bytes|filesizeformat }})</p>
+        </div>
+        
+        <div class="stat-card">
+            <h3>Chunks</h3>
+            <div class="stat-value">{{ storage_stats.total_chunks }}</div>
+            <p class="stat-label">
+                Original: {{ storage_stats.original_chunks }}<br>
+                Replicas: {{ storage_stats.replica_chunks }}
+            </p>
+        </div>
+    </div>
+    
+    <div class="dashboard-section">
+        <h2>Recent Files</h2>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Size</th>
+                    <th>Type</th>
+                    <th>Uploader</th>
+                    <th>Upload Date</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for file in recent_files %}
+                <tr>
+                    <td>{{ file.name }}</td>
+                    <td>{{ file.size_bytes|filesizeformat }}</td>
+                    <td>{{ file.file_type }}</td>
+                    <td>{{ file.uploader.username }}</td>
+                    <td>{{ file.upload_date }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5">No files found.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <div class="dashboard-section">
+        <h2>Recent Issues</h2>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>File</th>
+                    <th>Chunk</th>
+                    <th>Node</th>
+                    <th>Status</th>
+                    <th>Last Updated</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for chunk in recent_issues %}
+                <tr>
+                    <td>{{ chunk.file.name }}</td>
+                    <td>{{ chunk.chunk_number }}</td>
+                    <td>{{ chunk.node.name }}</td>
+                    <td>{{ chunk.get_status_display }}</td>
+                    <td>{{ chunk.updated_at }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5">No issues found.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

@@ -20,6 +20,15 @@ from .redundancy import RedundancyManager
 from .retrieval import FileCache
 from .utils import FileChunker
 
+from django.shortcuts import render, redirect, get_object_or_404
+from django.contrib.auth.decorators import login_required
+from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
+from django.db.models import Q, Count
+from .models import StoredFile, FileChunk, FileNode, ChunkStatus
+from .retrieval import FileCache
+from django.contrib.auth import logout
+from django.shortcuts import redirect
+
 
 # Add these new views to your views.py file
 @login_required
@@ -431,3 +440,132 @@ def cache_file(request, file_id):
         messages.error(request, f"Error caching file: {str(e)}")
 
     return redirect('file_storage:analytics_dashboard')
+
+
+@login_required
+def file_list(request):
+    """Enhanced file listing with filtering and pagination"""
+    # Get query parameters
+    search_query = request.GET.get('search', '')
+    selected_type = request.GET.get('type', '')
+    sort_by = request.GET.get('sort', 'date')
+
+    # Base queryset
+    files = StoredFile.objects.filter(uploader=request.user)
+
+    # Apply search filter
+    if search_query:
+        files = files.filter(
+            Q(name__icontains=search_query) |
+            Q(original_filename__icontains=search_query)
+        )
+
+    # Apply type filter
+    if selected_type:
+        files = files.filter(file_type=selected_type)
+
+    # Apply sorting
+    if sort_by == 'name':
+        files = files.order_by('name')
+    elif sort_by == 'size':
+        files = files.order_by('-size_bytes')
+    elif sort_by == 'type':
+        files = files.order_by('file_type')
+    else:  # Default: date
+        files = files.order_by('-upload_date')
+
+    # Get all file types for filter dropdown
+    file_types = StoredFile.objects.filter(
+        uploader=request.user
+    ).values('file_type').annotate(
+        count=Count('id')
+    ).order_by('file_type')
+
+    # Pagination
+    paginator = Paginator(files, 10)  # 10 files per page
+    page = request.GET.get('page')
+
+    try:
+        files = paginator.page(page)
+    except PageNotAnInteger:
+        # If page is not an integer, deliver first page
+        files = paginator.page(1)
+    except EmptyPage:
+        # If page is out of range, deliver last page of results
+        files = paginator.page(paginator.num_pages)
+
+    context = {
+        'files': files,
+        'paginator': paginator,
+        'search_query': search_query,
+        'selected_type': selected_type,
+        'sort_by': sort_by,
+        'file_types': file_types,
+        'is_filtered': bool(search_query or selected_type)
+    }
+
+    return render(request, 'file_storage/file_list.html', context)
+
+
+@login_required
+def enhanced_file_details(request, file_id):
+    """Enhanced file details view with more information"""
+    # Get file and check ownership
+    file = get_object_or_404(StoredFile, id=file_id, uploader=request.user)
+
+    # Get file health information
+    from .health import SystemHealth
+    file_health = SystemHealth.get_file_health(file)
+
+    # Get chunk information with replica counts
+    original_chunks = FileChunk.objects.filter(file=file, is_replica=False).order_by('chunk_number')
+
+    # Calculate replica factor
+    total_original_chunks = original_chunks.count()
+    total_replica_chunks = FileChunk.objects.filter(file=file, is_replica=True).count()
+    replica_factor = round(total_replica_chunks / total_original_chunks, 1) if total_original_chunks > 0 else 0
+
+    # Prepare enhanced chunk data
+    chunks_with_replicas = []
+    for chunk in original_chunks:
+        replica_count = FileChunk.objects.filter(
+            file=file,
+            chunk_number=chunk.chunk_number,
+            is_replica=True
+        ).count()
+
+        chunks_with_replicas.append({
+            'chunk_number': chunk.chunk_number,
+            'size_bytes': chunk.size_bytes,
+            'node_name': chunk.node.name if chunk.node else 'Unknown',
+            'status': chunk.status,
+            'status_display': chunk.get_status_display(),
+            'replica_count': replica_count
+        })
+
+    # Calculate average chunk size
+    avg_chunk_size = file.size_bytes / total_original_chunks if total_original_chunks > 0 else 0
+
+    # Check if file is cached
+    file_cached = FileCache.is_file_cached(file_id)
+
+    # Get access count
+    access_count = FileCache.get_access_count(file_id)
+
+    context = {
+        'file': file,
+        'file_health': file_health,
+        'chunks_with_replicas': chunks_with_replicas,
+        'total_chunks': total_original_chunks,
+        'unique_nodes': len(set(chunk.node_id for chunk in original_chunks if chunk.node)),
+        'replica_factor': replica_factor,
+        'avg_chunk_size': avg_chunk_size,
+        'file_cached': file_cached,
+        'access_count': access_count
+    }
+
+    return render(request, 'file_storage/file_details_enhanced.html', context)
+
+def logout_view(request):
+    logout(request)
+    return redirect('login')

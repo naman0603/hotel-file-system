@@ -1,0 +1,381 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="file-details-container">
+    <div class="file-details-header">
+        <div class="back-link">
+            <a href="{% url 'file_storage:file_list' %}" class="btn">
+                <i class="fas fa-arrow-left"></i> Back to Files
+            </a>
+        </div>
+        <h1>{{ file.name }}</h1>
+        <div class="file-actions">
+            <a href="{% url 'file_storage:download_file' file.id %}" class="btn btn-primary">
+                <i class="fas fa-download"></i> Download
+            </a>
+            {% if not file_cached %}
+            <a href="{% url 'file_storage:cache_file' file.id %}" class="btn">
+                <i class="fas fa-bolt"></i> Cache for Fast Access
+            </a>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="file-details-content">
+        <div class="file-overview">
+            <div class="file-preview">
+                <div class="file-icon">
+                    {% if file.file_type == '.pdf' %}
+                    <i class="far fa-file-pdf"></i>
+                    {% elif file.file_type == '.docx' or file.file_type == '.doc' %}
+                    <i class="far fa-file-word"></i>
+                    {% elif file.file_type == '.xlsx' or file.file_type == '.xls' %}
+                    <i class="far fa-file-excel"></i>
+                    {% elif file.file_type == '.jpg' or file.file_type == '.jpeg' or file.file_type == '.png' %}
+                    <i class="far fa-file-image"></i>
+                    {% elif file.file_type == '.txt' %}
+                    <i class="far fa-file-alt"></i>
+                    {% else %}
+                    <i class="far fa-file"></i>
+                    {% endif %}
+                </div>
+                <div class="file-status">
+                    <div class="status-badge {{ file_health.health_status }}">
+                        {{ file_health.health_status|title }}
+                    </div>
+                    {% if file_cached %}
+                    <div class="status-badge cached">Cached</div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="file-metadata">
+                <h2>File Information</h2>
+                <ul class="metadata-list">
+                    <li>
+                        <span class="label">Original Filename</span>
+                        <span class="value">{{ file.original_filename }}</span>
+                    </li>
+                    <li>
+                        <span class="label">Type</span>
+                        <span class="value">{{ file.file_type }}</span>
+                    </li>
+                    <li>
+                        <span class="label">Size</span>
+                        <span class="value">{{ file.size_bytes|filesizeformat }}</span>
+                    </li>
+                    <li>
+                        <span class="label">Upload Date</span>
+                        <span class="value">{{ file.upload_date }}</span>
+                    </li>
+                    <li>
+                        <span class="label">Last Accessed</span>
+                        <span class="value">{{ file.last_accessed|default:"Never" }}</span>
+                    </li>
+                    <li>
+                        <span class="label">Access Count</span>
+                        <span class="value">{{ access_count }}</span>
+                    </li>
+                    <li>
+                        <span class="label">Checksum</span>
+                        <span class="value code">{{ file.checksum }}</span>
+                    </li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="file-storage-details">
+            <div class="storage-header">
+                <h2>Storage Details</h2>
+                {% if not file_health.can_recover and file_health.health_status != 'healthy' %}
+                <div class="warning-badge">
+                    <i class="fas fa-exclamation-triangle"></i> File has issues and may not be recoverable
+                </div>
+                {% elif file_health.health_status != 'healthy' %}
+                <div class="warning-badge warning">
+                    <i class="fas fa-exclamation-triangle"></i> File has issues but can be recovered
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="storage-stats">
+                <div class="stat-box">
+                    <div class="stat-label">Total Chunks</div>
+                    <div class="stat-value">{{ total_chunks }}</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Storage Nodes</div>
+                    <div class="stat-value">{{ unique_nodes }}</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Average Chunk Size</div>
+                    <div class="stat-value">{{ avg_chunk_size|filesizeformat }}</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Replica Factor</div>
+                    <div class="stat-value">{{ replica_factor }}</div>
+                </div>
+            </div>
+
+            <div class="chunks-table-container">
+                <h3>Chunk Distribution</h3>
+                {% if file_health.health_status != 'healthy' %}
+                <div class="repair-action">
+                    <a href="{% url 'file_storage:repair_file' file.id %}" class="btn btn-warning">
+                        <i class="fas fa-wrench"></i> Repair File
+                    </a>
+                </div>
+                {% endif %}
+
+                <div class="table-responsive">
+                    <table class="chunks-table">
+                        <thead>
+                            <tr>
+                                <th>Chunk #</th>
+                                <th>Size</th>
+                                <th>Node</th>
+                                <th>Status</th>
+                                <th>Replicas</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for chunk_info in chunks_with_replicas %}
+                            <tr class="{{ chunk_info.status }}">
+                                <td>{{ chunk_info.chunk_number }}</td>
+                                <td>{{ chunk_info.size_bytes|filesizeformat }}</td>
+                                <td>{{ chunk_info.node_name }}</td>
+                                <td>
+                                    <span class="status-badge {{ chunk_info.status }}">
+                                        {{ chunk_info.status_display }}
+                                    </span>
+                                </td>
+                                <td>{{ chunk_info.replica_count }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="5">No chunks found for this file.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .file-details-container {
+        max-width: 1200px;
+        margin: 0 auto;
+    }
+    .file-details-header {
+        margin-bottom: 30px;
+    }
+    .back-link {
+        margin-bottom: 10px;
+    }
+    .file-details-header h1 {
+        margin: 0 0 15px 0;
+    }
+    .file-actions {
+        display: flex;
+        gap: 10px;
+    }
+    .file-details-content {
+        display: grid;
+        grid-template-columns: 1fr 2fr;
+        gap: 30px;
+    }
+    .file-overview, .file-storage-details {
+        background: white;
+        border-radius: 5px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        padding: 20px;
+    }
+    .file-preview {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 20px;
+        border: 1px solid #eee;
+        border-radius: 5px;
+        margin-bottom: 20px;
+    }
+    .file-icon {
+        font-size: 5rem;
+        color: #007bff;
+        margin-bottom: 15px;
+    }
+    .file-status {
+        display: flex;
+        gap: 10px;
+    }
+    .status-badge {
+        display: inline-block;
+        padding: 5px 10px;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+    .status-badge.healthy {
+        background-color: #d4edda;
+        color: #155724;
+    }
+    .status-badge.warning {
+        background-color: #fff3cd;
+        color: #856404;
+    }
+    .status-badge.critical {
+        background-color: #f8d7da;
+        color: #721c24;
+    }
+    .status-badge.cached {
+        background-color: #d1ecf1;
+        color: #0c5460;
+    }
+    .file-metadata h2 {
+        font-size: 1.2rem;
+        margin-top: 0;
+        margin-bottom: 15px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #eee;
+    }
+    .metadata-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+    .metadata-list li {
+        display: flex;
+        padding: 8px 0;
+        border-bottom: 1px solid #f5f5f5;
+    }
+    .metadata-list .label {
+        flex: 1;
+        font-weight: 600;
+        color: #555;
+    }
+    .metadata-list .value {
+        flex: 2;
+    }
+    .metadata-list .code {
+        font-family: monospace;
+        word-break: break-all;
+    }
+    .storage-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+    .storage-header h2 {
+        margin: 0;
+    }
+    .warning-badge {
+        background-color: #f8d7da;
+        color: #721c24;
+        padding: 5px 10px;
+        border-radius: 5px;
+        font-size: 0.9rem;
+    }
+    .warning-badge.warning {
+        background-color: #fff3cd;
+        color: #856404;
+    }
+    .storage-stats {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 15px;
+        margin-bottom: 30px;
+    }
+    .stat-box {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 5px;
+        text-align: center;
+    }
+    .stat-label {
+        font-size: 0.9rem;
+        color: #666;
+        margin-bottom: 5px;
+    }
+    .stat-value {
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: #333;
+    }
+    .chunks-table-container {
+        position: relative;
+    }
+    .chunks-table-container h3 {
+        margin-top: 0;
+        margin-bottom: 15px;
+    }
+    .repair-action {
+        position: absolute;
+        top: 0;
+        right: 0;
+    }
+    .table-responsive {
+        overflow-x: auto;
+    }
+    .chunks-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    .chunks-table th, .chunks-table td {
+        padding: 10px;
+        text-align: left;
+        border-bottom: 1px solid #eee;
+    }
+    .chunks-table th {
+        background: #f8f9fa;
+        border-bottom: 2px solid #ddd;
+    }
+    .chunks-table tr.corrupt, .chunks-table tr.failed {
+        background-color: rgba(248, 215, 218, 0.3);
+    }
+    .btn {
+        display: inline-block;
+        padding: 8px 15px;
+        border-radius: 4px;
+        text-decoration: none;
+        background-color: #f0f0f0;
+        color: #333;
+        border: none;
+        cursor: pointer;
+        font-weight: 500;
+    }
+    .btn:hover {
+        background-color: #e0e0e0;
+    }
+    .btn-primary {
+        background-color: #007bff;
+        color: white;
+    }
+    .btn-primary:hover {
+        background-color: #0069d9;
+    }
+    .btn-warning {
+        background-color: #ffc107;
+        color: #212529;
+    }
+    .btn-warning:hover {
+        background-color: #e0a800;
+    }
+
+    @media (max-width: 768px) {
+        .file-details-content {
+            grid-template-columns: 1fr;
+        }
+        .storage-stats {
+            grid-template-columns: repeat(2, 1fr);
+        }
+        .repair-action {
+            position: static;
+            margin-bottom: 15px;
+        }
+    }
+</style>
+{% endblock %}

@@ -1,0 +1,160 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block extrastyle %}
+<style>
+    .container {
+        padding: 20px;
+    }
+    .node-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+    .node-card {
+        background: white;
+        border-radius: 5px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        padding: 20px;
+        position: relative;
+    }
+    .node-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+    }
+    .node-header h3 {
+        margin: 0;
+    }
+    .status-badge {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: 12px;
+        font-size: 0.8em;
+        font-weight: bold;
+    }
+    .status-active {
+        background-color: #d4edda;
+        color: #155724;
+    }
+    .status-inactive {
+        background-color: #f8d7da;
+        color: #721c24;
+    }
+    .status-maintenance {
+        background-color: #fff3cd;
+        color: #856404;
+    }
+    .node-details {
+        margin-bottom: 15px;
+    }
+    .node-details p {
+        margin: 5px 0;
+    }
+    .health-meter {
+        height: 8px;
+        background-color: #e9ecef;
+        border-radius: 4px;
+        margin: 10px 0;
+        overflow: hidden;
+    }
+    .meter-fill {
+        height: 100%;
+        background-color: #28a745;
+        border-radius: 4px;
+    }
+    .health-warning .meter-fill {
+        background-color: #ffc107;
+    }
+    .health-critical .meter-fill {
+        background-color: #dc3545;
+    }
+    .node-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+    .dashboard-actions {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
+    }
+    .action-form {
+        display: inline;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1>Node Management</h1>
+    
+    <div class="dashboard-actions">
+        <a href="{% url 'admin:index' %}file_storage/filenode/add/" class="button">Add New Node</a>
+        <a href="{% url 'admin:admin_dashboard' %}" class="button">Back to Dashboard</a>
+    </div>
+    
+    <div class="node-grid">
+        {% for node in nodes %}
+        <div class="node-card health-{{ node.health_info.health_status }}">
+            <div class="node-header">
+                <h3>{{ node.name }}</h3>
+                <span class="status-badge status-{{ node.status }}">{{ node.status|title }}</span>
+            </div>
+            
+            <div class="node-details">
+                <p><strong>Hostname:</strong> {{ node.hostname }}:{{ node.port }}</p>
+                <p><strong>Health:</strong> {{ node.health_info.health_status|title }}</p>
+                <p><strong>Chunks:</strong> {{ node.health_info.chunks.total }}</p>
+                {% if node.health_info.chunks.corrupt > 0 or node.health_info.chunks.failed > 0 %}
+                <p><strong>Issues:</strong> {{ node.health_info.chunks.corrupt|add:node.health_info.chunks.failed }}</p>
+                {% endif %}
+                <div class="health-meter">
+                    <div class="meter-fill" style="width: {{ node.health_info.chunks.health_percentage }}%;"></div>
+                </div>
+            </div>
+            
+            <div class="node-actions">
+                {% if node.status != 'active' %}
+                <form method="post" action="{% url 'admin:node_management' %}" class="action-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="node_id" value="{{ node.id }}">
+                    <input type="hidden" name="action" value="activate">
+                    <button type="submit" class="button">Activate</button>
+                </form>
+                {% endif %}
+                
+                {% if node.status != 'inactive' %}
+                <form method="post" action="{% url 'admin:node_management' %}" class="action-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="node_id" value="{{ node.id }}">
+                    <input type="hidden" name="action" value="deactivate">
+                    <button type="submit" class="button">Deactivate</button>
+                </form>
+                {% endif %}
+                
+                {% if node.status != 'maintenance' %}
+                <form method="post" action="{% url 'admin:node_management' %}" class="action-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="node_id" value="{{ node.id }}">
+                    <input type="hidden" name="action" value="maintenance">
+                    <button type="submit" class="button">Maintenance</button>
+                </form>
+                {% endif %}
+                
+                <form method="post" action="{% url 'admin:node_management' %}" class="action-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="node_id" value="{{ node.id }}">
+                    <input type="hidden" name="action" value="delete">
+                    <button type="submit" class="button" onclick="return confirm('Are you sure you want to delete this node? This action cannot be undone.')">Delete</button>
+                </form>
+            </div>
+        </div>
+        {% empty %}
+        <p>No storage nodes found. Add a node to get started.</p>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

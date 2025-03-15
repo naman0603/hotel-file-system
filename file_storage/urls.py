@@ -1,5 +1,5 @@
 from django.urls import path
-from . import views, api
+from . import views, api, admin_views
 
 app_name = 'file_storage'
 
@@ -30,4 +30,16 @@ urlpatterns = [
     path('api/health/files/', api.user_files_health, name='user_files_health'),
     path('api/health/files/<str:file_id>/', api.file_health, name='file_health'),
     path('api/admin/health/', api.admin_system_health, name='admin_system_health'),
+
+    # Admin views
+    path('admin/dashboard/', admin_views.admin_dashboard, name='admin_dashboard'),
+    path('admin/nodes/', admin_views.admin_node_management, name='node_management'),
+    path('admin/storage-report/', admin_views.admin_storage_report, name='storage_report'),
+    path('admin/maintenance/', admin_views.admin_system_maintenance, name='system_maintenance'),
+    path('admin/ajax/node-status/', admin_views.ajax_node_status, name='ajax_node_status'),
+
+    path('files/', views.file_list, name='file_list'),
+    path('files/<uuid:file_id>/', views.enhanced_file_details, name='enhanced_file_details'),
+    path('accounts/logout/', views.logout_view, name='logout'),
+
 ]

@@ -1,0 +1,358 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="file-manager">
+    <div class="file-manager-header">
+        <h1>File Manager</h1>
+        <div class="header-actions">
+            <a href="{% url 'file_storage:upload_file' %}" class="btn btn-primary">
+                <i class="fas fa-upload"></i> Upload File
+            </a>
+        </div>
+    </div>
+    
+    <div class="filters-bar">
+        <form method="get" action="{% url 'file_storage:file_list' %}" class="filter-form">
+            <div class="filter-group">
+                <label for="type-filter">File Type:</label>
+                <select name="type" id="type-filter">
+                    <option value="">All Types</option>
+                    {% for type in file_types %}
+                    <option value="{{ type.file_type }}" {% if selected_type == type.file_type %}selected{% endif %}>
+                        {{ type.file_type }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="sort-by">Sort By:</label>
+                <select name="sort" id="sort-by">
+                  <option value="name">Name</option>
+                  <option value="date">Date (Newest)</option>
+                  <option value="size">Size (Largest)</option>
+                  <option value="type">Type</option>
+                </select>
+                <script>
+                  // Set the selected option based on the sort_by value
+                  document.addEventListener('DOMContentLoaded', function() {
+                    const sortBy = "{{ sort_by }}";
+                    if (sortBy) {
+                      document.getElementById('sort-by').value = sortBy;
+                    }
+                  });
+                </script>
+            </div>
+            <button type="submit" class="btn btn-sm">Apply Filters</button>
+            {% if is_filtered %}
+            <a href="{% url 'file_storage:file_list' %}" class="btn btn-sm btn-secondary">Clear Filters</a>
+            {% endif %}
+        </form>
+        <div class="search-box">
+            <form method="get" action="{% url 'file_storage:file_list' %}">
+                <input type="text" name="search" placeholder="Search files..." value="{{ search_query }}">
+                <button type="submit">
+                    <i class="fas fa-search"></i>
+                </button>
+            </form>
+        </div>
+    </div>
+    
+    <div class="file-list-container">
+        {% if files %}
+        <div class="file-list">
+            {% for file in files %}
+            <div class="file-card">
+                <div class="file-icon">
+                    {% if file.file_type == '.pdf' %}
+                    <i class="far fa-file-pdf"></i>
+                    {% elif file.file_type == '.docx' or file.file_type == '.doc' %}
+                    <i class="far fa-file-word"></i>
+                    {% elif file.file_type == '.xlsx' or file.file_type == '.xls' %}
+                    <i class="far fa-file-excel"></i>
+                    {% elif file.file_type == '.jpg' or file.file_type == '.jpeg' or file.file_type == '.png' %}
+                    <i class="far fa-file-image"></i>
+                    {% elif file.file_type == '.txt' %}
+                    <i class="far fa-file-alt"></i>
+                    {% else %}
+                    <i class="far fa-file"></i>
+                    {% endif %}
+                </div>
+                <div class="file-info">
+                    <h3 class="file-name">
+                        <a href="{% url 'file_storage:file_details' file.id %}">{{ file.name }}</a>
+                    </h3>
+                    <p class="file-meta">
+                        {{ file.size_bytes|filesizeformat }} • {{ file.file_type }}
+                    </p>
+                    <p class="file-date">
+                        Uploaded on {{ file.upload_date|date:"M d, Y" }} at {{ file.upload_date|time:"H:i" }}
+                    </p>
+                </div>
+                <div class="file-actions">
+                    <a href="{% url 'file_storage:download_file' file.id %}" class="btn btn-sm" title="Download">
+                        <i class="fas fa-download"></i>
+                    </a>
+                    <a href="{% url 'file_storage:file_details' file.id %}" class="btn btn-sm" title="Details">
+                        <i class="fas fa-info-circle"></i>
+                    </a>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        
+        <div class="pagination">
+            <span class="pagination-info">
+                Showing {{ files.start_index }} to {{ files.end_index }} of {{ paginator.count }} files
+            </span>
+            <div class="pagination-controls">
+                {% if files.has_previous %}
+                <a href="?page=1{% if search_query %}&search={{ search_query }}{% endif %}{% if selected_type %}&type={{ selected_type }}{% endif %}{% if sort_by %}&sort={{ sort_by }}{% endif %}" class="btn btn-sm">First</a>
+                <a href="?page={{ files.previous_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if selected_type %}&type={{ selected_type }}{% endif %}{% if sort_by %}&sort={{ sort_by }}{% endif %}" class="btn btn-sm">Previous</a>
+                {% endif %}
+                
+                {% for num in paginator.page_range %}
+                    {% if num == files.number %}
+                    <span class="page-current">{{ num }}</span>
+                    {% elif num > files.number|add:'-3' and num < files.number|add:'3' %}
+                    <a href="?page={{ num }}{% if search_query %}&search={{ search_query }}{% endif %}{% if selected_type %}&type={{ selected_type }}{% endif %}{% if sort_by %}&sort={{ sort_by }}{% endif %}" class="btn btn-sm">{{ num }}</a>
+                    {% endif %}
+                {% endfor %}
+                
+                {% if files.has_next %}
+                <a href="?page={{ files.next_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if selected_type %}&type={{ selected_type }}{% endif %}{% if sort_by %}&sort={{ sort_by }}{% endif %}" class="btn btn-sm">Next</a>
+                <a href="?page={{ paginator.num_pages }}{% if search_query %}&search={{ search_query }}{% endif %}{% if selected_type %}&type={{ selected_type }}{% endif %}{% if sort_by %}&sort={{ sort_by }}{% endif %}" class="btn btn-sm">Last</a>
+                {% endif %}
+            </div>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <div class="empty-icon">
+                <i class="far fa-folder-open"></i>
+            </div>
+            <h2>No files found</h2>
+            {% if is_filtered or search_query %}
+            <p>No files match your search criteria. Try different filters or clear them.</p>
+            <a href="{% url 'file_storage:file_list' %}" class="btn btn-primary">Clear Filters</a>
+            {% else %}
+            <p>You haven't uploaded any files yet.</p>
+            <a href="{% url 'file_storage:upload_file' %}" class="btn btn-primary">Upload Your First File</a>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<style>
+    .file-manager {
+        max-width: 1200px;
+        margin: 0 auto;
+    }
+    .file-manager-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+    .header-actions {
+        display: flex;
+        gap: 10px;
+    }
+    .filters-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: white;
+        padding: 15px;
+        border-radius: 5px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
+    }
+    .filter-form {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }
+    .filter-group {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+    }
+    .filter-group label {
+        font-weight: 600;
+        font-size: 0.9em;
+    }
+    .filter-group select {
+        padding: 6px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+    }
+    .search-box {
+        position: relative;
+    }
+    .search-box input {
+        padding: 8px 30px 8px 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        width: 250px;
+    }
+    .search-box button {
+        position: absolute;
+        right: 5px;
+        top: 50%;
+        transform: translateY(-50%);
+        background: none;
+        border: none;
+        color: #666;
+        cursor: pointer;
+    }
+    .file-list-container {
+        background: white;
+        border-radius: 5px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        padding: 20px;
+    }
+    .file-list {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+    }
+    .file-card {
+        display: flex;
+        align-items: center;
+        padding: 15px;
+        border-radius: 5px;
+        border: 1px solid #eee;
+        transition: all 0.2s ease;
+    }
+    .file-card:hover {
+        box-shadow: 0 3px 6px rgba(0,0,0,0.1);
+        border-color: #ddd;
+    }
+    .file-icon {
+        font-size: 2rem;
+        width: 60px;
+        height: 60px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #007bff;
+    }
+    .file-info {
+        flex: 1;
+    }
+    .file-name {
+        margin: 0 0 5px 0;
+        font-size: 1.1rem;
+    }
+    .file-name a {
+        color: #333;
+        text-decoration: none;
+    }
+    .file-name a:hover {
+        color: #007bff;
+    }
+    .file-meta, .file-date {
+        margin: 0;
+        color: #666;
+        font-size: 0.9rem;
+    }
+    .file-actions {
+        display: flex;
+        gap: 10px;
+    }
+    .btn {
+        display: inline-block;
+        padding: 8px 15px;
+        border-radius: 4px;
+        text-decoration: none;
+        background-color: #f0f0f0;
+        color: #333;
+        border: none;
+        cursor: pointer;
+        font-weight: 500;
+    }
+    .btn:hover {
+        background-color: #e0e0e0;
+    }
+    .btn-sm {
+        padding: 5px 10px;
+        font-size: 0.9rem;
+    }
+    .btn-primary {
+        background-color: #007bff;
+        color: white;
+    }
+    .btn-primary:hover {
+        background-color: #0069d9;
+    }
+    .btn-secondary {
+        background-color: #6c757d;
+        color: white;
+    }
+    .btn-secondary:hover {
+        background-color: #5a6268;
+    }
+    .pagination {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 20px;
+        padding-top: 20px;
+        border-top: 1px solid #eee;
+    }
+    .pagination-info {
+        font-size: 0.9rem;
+        color: #666;
+    }
+    .pagination-controls {
+        display: flex;
+        gap: 5px;
+        align-items: center;
+    }
+    .page-current {
+        display: inline-block;
+        padding: 5px 10px;
+        background-color: #007bff;
+        color: white;
+        border-radius: 4px;
+        font-weight: 500;
+    }
+    .empty-state {
+        text-align: center;
+        padding: 40px 0;
+    }
+    .empty-icon {
+        font-size: 4rem;
+        color: #ccc;
+        margin-bottom: 20px;
+    }
+    .empty-state h2 {
+        margin-bottom: 10px;
+        color: #555;
+    }
+    .empty-state p {
+        color: #888;
+        margin-bottom: 20px;
+    }
+    
+    @media (max-width: 768px) {
+        .filters-bar {
+            flex-direction: column;
+            gap: 15px;
+        }
+        .filter-form {
+            flex-wrap: wrap;
+        }
+        .search-box {
+            width: 100%;
+        }
+        .search-box input {
+            width: 100%;
+        }
+        .pagination {
+            flex-direction: column;
+            gap: 10px;
+        }
+    }
+</style>
+{% endblock %}

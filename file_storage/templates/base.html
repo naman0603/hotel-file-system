@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hotel File System</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -24,20 +25,17 @@
             align-items: center;
             gap: 15px;
         }
-        .nav-link {
-            color: #007bff;
-            text-decoration: none;
-        }
-
-        .nav-link:hover {
-            text-decoration: underline;
-        }
-
         .nav-links {
             display: flex;
             gap: 20px;
         }
-
+        .nav-link {
+            color: #007bff;
+            text-decoration: none;
+        }
+        .nav-link:hover {
+            text-decoration: underline;
+        }
         .dashboard {
             max-width: 1200px;
             margin: 0 auto;
@@ -99,23 +97,73 @@
         .node-maintenance {
             border-left-color: #ffc107;
         }
+
+        /* Width classes for progress bars */
+        .width-0 { width: 0%; }
+        .width-5 { width: 5%; }
+        .width-10 { width: 10%; }
+        .width-15 { width: 15%; }
+        .width-20 { width: 20%; }
+        .width-25 { width: 25%; }
+        .width-30 { width: 30%; }
+        .width-35 { width: 35%; }
+        .width-40 { width: 40%; }
+        .width-45 { width: 45%; }
+        .width-50 { width: 50%; }
+        .width-55 { width: 55%; }
+        .width-60 { width: 60%; }
+        .width-65 { width: 65%; }
+        .width-70 { width: 70%; }
+        .width-75 { width: 75%; }
+        .width-80 { width: 80%; }
+        .width-85 { width: 85%; }
+        .width-90 { width: 90%; }
+        .width-95 { width: 95%; }
+        .width-100 { width: 100%; }
+
+        /* Additional styles for logout button */
+        .logout-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: #007bff;
+            font-family: Arial, sans-serif;
+            font-size: 1em;
+            padding: 0;
+            text-decoration: underline;
+        }
+        .logout-btn:hover {
+            color: #0056b3;
+        }
     </style>
 </head>
 <body>
     <header>
         <h1>Hotel File System</h1>
+        <div class="nav-links">
+            <a href="{% url 'file_storage:dashboard' %}" class="nav-link">
+                <i class="fas fa-home"></i> Dashboard
+            </a>
+            <a href="{% url 'file_storage:file_list' %}" class="nav-link">
+                <i class="fas fa-file"></i> Files
+            </a>
+            <a href="{% url 'file_storage:health_dashboard' %}" class="nav-link">
+                <i class="fas fa-heartbeat"></i> Health
+            </a>
+            <a href="{% url 'file_storage:analytics_dashboard' %}" class="nav-link">
+                <i class="fas fa-chart-line"></i> Analytics
+            </a>
+        </div>
         <div class="user-nav">
             {% if user.is_authenticated %}
                 <span>Hello, {{ user.username }}!</span>
-                <a href="{% url 'logout' %}" class="nav-link">Log Out</a>
+                <form method="post" action="{% url 'logout' %}">
+                    {% csrf_token %}
+                    <button type="submit" class="logout-btn">Log Out</button>
+                </form>
             {% else %}
                 <a href="{% url 'login' %}" class="nav-link">Log In</a>
             {% endif %}
-        </div>
-        <div class="nav-links">
-            <a href="{% url 'file_storage:dashboard' %}" class="nav-link">Dashboard</a>
-            <a href="{% url 'file_storage:health_dashboard' %}" class="nav-link">Health Monitor</a>
-            <a href="{% url 'file_storage:analytics_dashboard' %}" class="nav-link">Analytics</a>
         </div>
     </header>
 
@@ -124,7 +172,6 @@
     </main>
 
     <footer>
-        <!-- Footer content could go here -->
     </footer>
 </body>
 </html>

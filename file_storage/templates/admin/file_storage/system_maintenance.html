@@ -1,0 +1,149 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block extrastyle %}
+<style>
+    .container {
+        padding: 20px;
+    }
+    .dashboard-actions {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
+    }
+    .maintenance-section {
+        background: white;
+        border-radius: 5px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        padding: 20px;
+        margin-bottom: 30px;
+    }
+    .maintenance-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 20px;
+        margin-bottom: 20px;
+    }
+    .stat-card {
+        background: #f8f9fa;
+        border-radius: 5px;
+        padding: 15px;
+    }
+    .stat-card h3 {
+        margin-top: 0;
+        margin-bottom: 10px;
+    }
+    .stat-value {
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: #007bff;
+    }
+    .maintenance-form {
+        background: #f8f9fa;
+        border-radius: 5px;
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+    .form-row {
+        margin-bottom: 15px;
+    }
+    .form-row label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+    }
+    .form-row select, .form-row input {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ced4da;
+        border-radius: 4px;
+    }
+    .form-buttons {
+        margin-top: 15px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1>System Maintenance</h1>
+
+    <div class="dashboard-actions">
+        <a href="{% url 'admin:admin_dashboard' %}" class="button">Back to Dashboard</a>
+    </div>
+
+    <div class="maintenance-section">
+        <h2>System Statistics</h2>
+        <div class="maintenance-grid">
+            <div class="stat-card">
+                <h3>Total Chunks</h3>
+                <div class="stat-value">{{ maintenance_stats.total_chunks }}</div>
+            </div>
+            <div class="stat-card">
+                <h3>Original Chunks</h3>
+                <div class="stat-value">{{ maintenance_stats.original_chunks }}</div>
+            </div>
+            <div class="stat-card">
+                <h3>Replica Chunks</h3>
+                <div class="stat-value">{{ maintenance_stats.replica_chunks }}</div>
+            </div>
+            <div class="stat-card">
+                <h3>Replica Ratio</h3>
+                <div class="stat-value">{{ maintenance_stats.replica_ratio }}</div>
+            </div>
+            <div class="stat-card">
+                <h3>Chunks Without Replicas</h3>
+                <div class="stat-value">{{ maintenance_stats.no_replica_chunks }}</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="maintenance-section">
+        <h2>Maintenance Tasks</h2>
+
+        <div class="maintenance-form">
+            <h3>Verify System Integrity</h3>
+            <p>Run a system-wide integrity check on all chunks and files.</p>
+            <form method="post" action="{% url 'admin:system_maintenance' %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="verify_integrity">
+                <div class="form-buttons">
+                    <button type="submit" class="button">Run Integrity Check</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="maintenance-form">
+            <h3>Ensure Minimum Replicas</h3>
+            <p>Make sure all chunks have at least the specified number of replicas.</p>
+            <form method="post" action="{% url 'admin:system_maintenance' %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="ensure_replicas">
+                <div class="form-row">
+                    <label for="replica_count">Minimum Replicas:</label>
+                    <select name="replica_count" id="replica_count">
+                        <option value="1">1 (Minimum)</option>
+                        <option value="2">2 (Recommended)</option>
+                        <option value="3">3 (High Availability)</option>
+                    </select>
+                </div>
+                <div class="form-buttons">
+                    <button type="submit" class="button">Ensure Replicas</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="maintenance-form">
+            <h3>Rebalance Storage Nodes</h3>
+            <p>Redistribute chunks across nodes to balance storage usage.</p>
+            <form method="post" action="{% url 'admin:system_maintenance' %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="rebalance_nodes">
+                <div class="form-buttons">
+                    <button type="submit" class="button">Rebalance Nodes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
