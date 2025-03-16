@@ -41,23 +41,26 @@ class FileChunker:
 
         Returns:
             list: List of created FileChunk instances
-
-        Raises:
-            ChunkingError: If chunking process fails
         """
         # Reset file pointer
         file_obj.seek(0)
 
-        # Get active storage nodes
-        nodes = list(NodeManager.get_active_nodes())
-        if not nodes:
-            logger.error("No active storage nodes available")
-            raise ChunkingError("No active storage nodes available for storing file chunks")
+        # Get only active AND available nodes
+        active_nodes = list(FileNode.objects.filter(status='active'))
+        available_nodes = []
+
+        for node in active_nodes:
+            if NodeManager.check_node_availability(node):
+                available_nodes.append(node)
+
+        if len(available_nodes) < 2:
+            logger.error("Not enough available storage nodes (minimum 2 required)")
+            raise ChunkingError("Not enough available storage nodes (minimum 2 required)")
 
         # Track file position
         position = 0
         chunk_number = 1
-        chunks = []  # Use a regular list, not a QuerySet
+        chunks = []  # Initialize as an empty list
 
         # Read and store file in chunks
         while True:
@@ -71,21 +74,20 @@ class FileChunker:
             # Try to store on each node until one succeeds
             stored = False
 
-            # Start with a primary node (we'll use the first active node)
-            primary_node = nodes[0] if nodes else None
-            if not primary_node:
-                raise ChunkingError("No primary node available")
-
-            try:
-                # Upload to primary node first
-                with transaction.atomic():
+            # Try nodes in order of availability
+            for node in available_nodes:
+                try:
                     object_name = f"chunks/{user.username}/{stored_file.id}_{chunk_number}_{uuid.uuid4().hex}.chunk"
-                    client = NodeManager.get_node_client(primary_node)
+                    client = NodeManager.get_node_client(node)
+
+                    if client is None:
+                        logger.error(f"Failed to get client for node {node.name}")
+                        continue
 
                     # Upload chunk to MinIO
                     from io import BytesIO
                     client.put_object(
-                        bucket_name=primary_node.bucket_name,
+                        bucket_name=node.bucket_name,
                         object_name=object_name,
                         data=BytesIO(chunk_data),
                         length=len(chunk_data)
@@ -98,56 +100,25 @@ class FileChunker:
                         size_bytes=len(chunk_data),
                         checksum=chunk_hash,
                         storage_path=object_name,
-                        node=primary_node,
+                        node=node,
                         status=ChunkStatus.UPLOADED
                     )
 
-                    chunks.append(chunk)
+                    chunks.append(chunk)  # Append to our list
                     stored = True
-                    logger.info(f"Chunk {chunk_number} uploaded to primary node {primary_node.name}")
-            except Exception as e:
-                logger.error(f"Error uploading chunk {chunk_number} to primary node: {str(e)}")
-                # Try alternative nodes
-                for node in nodes[1:]:
-                    try:
-                        with transaction.atomic():
-                            object_name = f"chunks/{user.username}/{stored_file.id}_{chunk_number}_{uuid.uuid4().hex}.chunk"
-                            client = NodeManager.get_node_client(node)
-
-                            # Upload chunk to MinIO
-                            from io import BytesIO
-                            client.put_object(
-                                bucket_name=node.bucket_name,
-                                object_name=object_name,
-                                data=BytesIO(chunk_data),
-                                length=len(chunk_data)
-                            )
-
-                            # Create chunk record
-                            chunk = FileChunk.objects.create(
-                                file=stored_file,
-                                chunk_number=chunk_number,
-                                size_bytes=len(chunk_data),
-                                checksum=chunk_hash,
-                                storage_path=object_name,
-                                node=node,
-                                status=ChunkStatus.UPLOADED
-                            )
-
-                            chunks.append(chunk)
-                            stored = True
-                            logger.info(f"Chunk {chunk_number} uploaded to alternative node {node.name}")
-                            break
-                    except Exception as alt_e:
-                        logger.error(f"Error uploading chunk {chunk_number} to node {node.name}: {str(alt_e)}")
+                    logger.info(f"Chunk {chunk_number} uploaded to node {node.name}")
+                    break
+                except Exception as e:
+                    logger.error(f"Error uploading chunk {chunk_number} to node {node.name}: {str(e)}")
+                    continue
 
             if not stored:
                 logger.error(f"Failed to store chunk {chunk_number} on any available node")
                 raise ChunkingError(f"Failed to store chunk {chunk_number} on any available node")
 
-            # Create replicas after successful upload
+            # Create replicas after successful upload, using only available nodes
             try:
-                self._create_replicas(chunk, nodes)
+                self._create_replicas(chunk, available_nodes)
             except Exception as repl_e:
                 logger.error(f"Failed to create replicas for chunk {chunk_number}: {str(repl_e)}")
                 # Continue without failing the upload
@@ -159,14 +130,28 @@ class FileChunker:
         return chunks
 
     def _create_replicas(self, chunk, nodes):
-        """Create replicas for this chunk on other nodes"""
+        """Create replicas for this chunk on other available nodes"""
         # Skip replicas if we don't have enough nodes
         if len(nodes) <= 1:
             logger.warning("Not enough nodes for replication")
             return
 
-        # Only create replicas on nodes that don't already have this chunk
-        replica_nodes = [node for node in nodes if node is not None and node.id != chunk.node.id]
+        # Skip if chunk has no node
+        if chunk.node is None:
+            logger.warning(f"Chunk {chunk.id} has no node assigned, skipping replication")
+            return
+
+        # Only create replicas on active nodes that don't already have this chunk
+        replica_nodes = []
+        for node in nodes:
+            if node is not None and node.id != chunk.node.id:
+                # Verify node is actually available
+                if NodeManager.check_node_availability(node):
+                    replica_nodes.append(node)
+
+        if not replica_nodes:
+            logger.warning(f"No available nodes for replication of chunk {chunk.id}")
+            return
 
         for replica_node in replica_nodes:
             try:
@@ -186,6 +171,10 @@ class FileChunker:
                     # Get source client
                     source_client = NodeManager.get_node_client(chunk.node)
 
+                    if source_client is None:
+                        logger.error(f"Failed to get client for source node {chunk.node.name}")
+                        continue
+
                     # Read the original chunk
                     response = source_client.get_object(chunk.node.bucket_name, chunk.storage_path)
                     chunk_data = response.read()
@@ -199,6 +188,10 @@ class FileChunker:
                     # Create replica on target node
                     replica_path = f"replicas/{chunk.file.uploader.username}/{chunk.file.id}_{chunk.chunk_number}_{uuid.uuid4().hex}.chunk"
                     replica_client = NodeManager.get_node_client(replica_node)
+
+                    if replica_client is None:
+                        logger.error(f"Failed to get client for replica node {replica_node.name}")
+                        continue
 
                     from io import BytesIO
                     replica_client.put_object(
@@ -236,9 +229,17 @@ class FileChunker:
             except Exception as e:
                 logger.error(f"Error cleaning up chunk {chunk.id}: {str(e)}")
 
+    # In file_storage/utils.py
+
+    # In file_storage/utils.py
+
     def reassemble_file_optimized(self, stored_file):
         """
-        Reassemble a file from its chunks with failover support
+        Reassemble a file from its chunks with comprehensive failover support
+
+        This method can recover a file even if multiple nodes are offline
+        as long as either original chunks or their replicas are available
+        on at least one working node.
 
         Args:
             stored_file: StoredFile model instance
@@ -247,15 +248,17 @@ class FileChunker:
             file-like object with the reassembled file
         """
         from io import BytesIO
+        import time
 
         # Create a buffer to hold the reassembled file
         buffer = BytesIO()
 
         # Get all chunk numbers for this file
-        chunk_numbers = FileChunk.objects.filter(
-            file=stored_file,
-            status=ChunkStatus.UPLOADED
-        ).values_list('chunk_number', flat=True).distinct().order_by('chunk_number')
+        chunk_numbers = sorted(
+            FileChunk.objects.filter(file=stored_file)
+            .values_list('chunk_number', flat=True)
+            .distinct()
+        )
 
         if not chunk_numbers:
             logger.error(f"No chunks found for file {stored_file.id}")
@@ -272,64 +275,94 @@ class FileChunker:
 
         # Track nodes that have failed during this retrieval
         failed_nodes = []
+        start_time = time.time()
 
         # Reassemble the file
         for chunk_number in expected_numbers:
-            # Try primary chunks first
-            primary_chunks = list(FileChunk.objects.filter(
-                file=stored_file,
-                chunk_number=chunk_number,
-                is_replica=False,
-                status=ChunkStatus.UPLOADED
-            ).exclude(node__in=failed_nodes))
-
-            # Then try replicas
-            replica_chunks = list(FileChunk.objects.filter(
-                file=stored_file,
-                chunk_number=chunk_number,
-                is_replica=True,
-                status=ChunkStatus.UPLOADED
-            ).exclude(node__in=failed_nodes))
-
-            # Combine both lists, prioritizing primaries
-            all_chunks = primary_chunks + replica_chunks
+            # Try to get all available chunks (both primary and replicas) for this chunk number
+            all_chunks = list(
+                FileChunk.objects.filter(
+                    file=stored_file,
+                    chunk_number=chunk_number,
+                    status=ChunkStatus.UPLOADED
+                ).select_related('node')
+            )
 
             if not all_chunks:
+                logger.error(f"No chunks (original or replica) found for chunk number {chunk_number}")
                 raise ReassemblyError(f"No chunks found for chunk number {chunk_number}")
+
+            # Sort chunks - prioritize non-replicas and use nodes that aren't in failed_nodes
+            # This ensures we try primary chunks first, then replicas, and avoid failed nodes
+            all_chunks.sort(
+                key=lambda c: (
+                    c.is_replica,  # Try non-replicas first
+                    c.node in failed_nodes if c.node else True,  # Avoid failed nodes
+                )
+            )
 
             # Try each chunk until one succeeds
             chunk_retrieved = False
             for chunk in all_chunks:
+                # Skip chunks with no node
+                if not chunk.node:
+                    logger.warning(f"Chunk {chunk.id} has no associated node, skipping")
+                    continue
+
+                # Skip chunks on nodes we already know have failed
+                if chunk.node in failed_nodes:
+                    logger.debug(f"Skipping chunk on known failed node {chunk.node.name}")
+                    continue
+
                 try:
-                    # Check if node is available
-                    if chunk.node in failed_nodes:
+                    # Check if node is responsive
+                    client = NodeManager.get_node_client(chunk.node)
+                    if client is None:
+                        logger.warning(f"Could not get client for node {chunk.node.name}, marking as failed")
+                        failed_nodes.append(chunk.node)
                         continue
 
-                    # Get client for the node
-                    client = NodeManager.get_node_client(chunk.node)
-
-                    # Get the chunk data
-                    response = client.get_object(chunk.node.bucket_name, chunk.storage_path)
-                    chunk_data = response.read()
+                    # Get the chunk data with timeout
+                    try:
+                        # Get the chunk data
+                        response = client.get_object(chunk.node.bucket_name, chunk.storage_path)
+                        chunk_data = response.read()
+                    except Exception as e:
+                        logger.warning(f"Error reading chunk from node {chunk.node.name}: {str(e)}")
+                        failed_nodes.append(chunk.node)
+                        continue
 
                     # Verify integrity
                     chunk_hash = hashlib.sha256(chunk_data).hexdigest()
                     if chunk_hash != chunk.checksum:
-                        logger.warning(f"Checksum mismatch for chunk {chunk.id}")
+                        logger.warning(f"Checksum mismatch for chunk {chunk.id} from node {chunk.node.name}")
+                        # If primary is corrupt, update its status
+                        if not chunk.is_replica:
+                            chunk.status = ChunkStatus.CORRUPT
+                            chunk.save()
                         continue
 
                     # Write to buffer
                     buffer.write(chunk_data)
                     chunk_retrieved = True
-                    logger.info(f"Retrieved chunk {chunk_number} from node {chunk.node.name}")
+
+                    chunk_type = "replica" if chunk.is_replica else "primary"
+                    logger.info(f"Retrieved chunk {chunk_number} ({chunk_type}) from node {chunk.node.name}")
                     break
+
                 except Exception as e:
                     logger.error(f"Error retrieving chunk {chunk_number} from node {chunk.node.name}: {str(e)}")
-                    # Mark this node as failed
                     failed_nodes.append(chunk.node)
 
             if not chunk_retrieved:
-                raise ReassemblyError(f"Failed to retrieve chunk {chunk_number} from any node")
+                # If we couldn't get this chunk from any node, fail the download
+                raise ReassemblyError(
+                    f"Failed to retrieve chunk {chunk_number} from any node. "
+                    f"Tried {len(all_chunks)} chunks across {len(set(c.node for c in all_chunks if c.node))} nodes."
+                )
+
+        end_time = time.time()
+        logger.info(f"File {stored_file.id} reassembled in {end_time - start_time:.2f} seconds")
 
         # Reset buffer position for reading
         buffer.seek(0)

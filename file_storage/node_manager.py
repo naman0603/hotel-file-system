@@ -62,24 +62,35 @@ class NodeManager:
     def get_node_client(node):
         """Get a MinIO client for a specific node"""
         from minio import Minio
-        from minio.commonconfig import ENABLED
 
-        client = Minio(
-            f"{node.hostname}:{node.port}",
-            access_key=node.access_key,
-            secret_key=node.secret_key,
-            secure=False  # Use True for HTTPS
-        )
+        # Handle None node
+        if node is None:
+            logger.error("Cannot create MinIO client for None node")
+            return None
 
-        # Ensure bucket exists
+        # Use appropriate hostname based on environment
+        hostname = node.hostname
+        port = node.port
+
+        logger.info(f"Connecting to MinIO at {hostname}:{port}")
+
         try:
+            client = Minio(
+                f"{hostname}:{port}",
+                access_key=node.access_key,
+                secret_key=node.secret_key,
+                secure=False  # Use True for HTTPS
+            )
+
+            # Ensure bucket exists
             if not client.bucket_exists(node.bucket_name):
                 client.make_bucket(node.bucket_name)
                 logger.info(f"Created bucket {node.bucket_name} on {node.name}")
-        except Exception as e:
-            logger.error(f"Error ensuring bucket on {node.name}: {str(e)}")
 
-        return client
+            return client
+        except Exception as e:
+            logger.error(f"Error creating MinIO client for node {node.name}: {str(e)}")
+            return None
 
     @staticmethod
     def elect_best_node_for_upload():
@@ -197,3 +208,22 @@ class NodeManager:
             # Don't raise the exception - we'll handle it at higher levels
 
         return client
+
+    # In file_storage/node_manager.py
+
+    @staticmethod
+    def get_available_nodes_count():
+        """
+        Count how many nodes are currently available and responsive
+
+        Returns:
+            int: Number of available nodes
+        """
+        active_nodes = FileNode.objects.filter(status='active')
+        available_count = 0
+
+        for node in active_nodes:
+            if NodeManager.check_node_availability(node):
+                available_count += 1
+
+        return available_count

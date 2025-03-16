@@ -1,6 +1,8 @@
 import random
 import logging
 import hashlib
+import uuid
+
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from django.db import transaction
@@ -18,6 +20,8 @@ class RedundancyManager:
     def __init__(self, min_replicas=1):
         self.min_replicas = min_replicas
 
+    # In file_storage/redundancy.py
+
     def create_replicas_for_chunk(self, chunk, exclude_nodes=None):
         """
         Create replicas for a specific chunk across multiple servers
@@ -29,25 +33,39 @@ class RedundancyManager:
         Returns:
             int: Number of replicas created
         """
-        if exclude_nodes is None:
-            exclude_nodes = []
+        # Skip if the chunk ID doesn't exist in the database
+        if not chunk or not chunk.id:
+            logger.warning("Cannot create replicas for non-existent chunk")
+            return 0
 
-        # Don't replicate replicas
+        # Skip if chunk has no assigned node
+        if chunk.node is None:
+            logger.warning(f"Cannot create replica for chunk {chunk.id}: source node is None")
+            return 0
+
+        # Skip non-original chunks
         if chunk.is_replica:
             return 0
 
-        # Don't replicate corrupted chunks
+        # Skip chunks that aren't successfully uploaded
         if chunk.status != ChunkStatus.UPLOADED:
             return 0
 
+        if exclude_nodes is None:
+            exclude_nodes = []
+        else:
+            # Ensure exclude_nodes is a list, not a QuerySet
+            exclude_nodes = list(exclude_nodes)
+
         # Add the chunk's current node to exclude list
-        if chunk.node:
+        if chunk.node and chunk.node not in exclude_nodes:
             exclude_nodes.append(chunk.node)
 
+        # Get list of node IDs to exclude
+        exclude_node_ids = [n.id for n in exclude_nodes if n is not None and hasattr(n, 'id')]
+
         # Get active nodes excluding specified ones
-        active_nodes = FileNode.objects.filter(status='active').exclude(
-            id__in=[n.id for n in exclude_nodes]
-        )
+        active_nodes = FileNode.objects.filter(status='active').exclude(id__in=exclude_node_ids)
 
         if not active_nodes:
             logger.warning(f"No active nodes available for replication of chunk {chunk.id}")
@@ -58,19 +76,42 @@ class RedundancyManager:
         # Create a replica on each available node, up to min_replicas
         for node in active_nodes[:self.min_replicas]:
             try:
+                # Skip if node is None
+                if node is None:
+                    continue
+
+                # Verify source node exists and is valid
+                if chunk.node is None:
+                    logger.error(f"Cannot create replica for chunk {chunk.id}: source node is None")
+                    continue
+
                 # Get source node client
                 source_client = NodeManager.get_node_client(chunk.node)
+
+                if source_client is None:
+                    logger.error(
+                        f"Cannot create replica for chunk {chunk.id}: failed to get client for source node {chunk.node.name}")
+                    continue
 
                 # Get destination node client
                 dest_client = NodeManager.get_node_client(node)
 
+                if dest_client is None:
+                    logger.error(
+                        f"Cannot create replica for chunk {chunk.id}: failed to get client for destination node {node.name}")
+                    continue
+
                 # Create a new path for the replica
-                replica_path = f"replicas/{chunk.file.uploader.username}/{chunk.file.id}_{chunk.chunk_number}_{node.id}.chunk"
+                replica_path = f"replicas/{chunk.file.uploader.username}/{chunk.file.id}_{chunk.chunk_number}_{uuid.uuid4().hex}.chunk"
 
                 # Copy the object from source to destination
                 # First, download from source
-                response = source_client.get_object(chunk.node.bucket_name, chunk.storage_path)
-                chunk_data = response.read()
+                try:
+                    response = source_client.get_object(chunk.node.bucket_name, chunk.storage_path)
+                    chunk_data = response.read()
+                except Exception as e:
+                    logger.error(f"Failed to read chunk {chunk.id} from source node: {str(e)}")
+                    continue
 
                 # Verify the source integrity
                 chunk_hash = hashlib.sha256(chunk_data).hexdigest()
@@ -86,6 +127,18 @@ class RedundancyManager:
                     data=BytesIO(chunk_data),
                     length=len(chunk_data)
                 )
+
+                # Check if replica already exists for this chunk on this node
+                existing_replica = FileChunk.objects.filter(
+                    file=chunk.file,
+                    chunk_number=chunk.chunk_number,
+                    is_replica=True,
+                    node=node
+                ).first()
+
+                if existing_replica:
+                    logger.info(f"Replica already exists for chunk {chunk.id} on node {node.name}")
+                    continue
 
                 # Create replica record
                 FileChunk.objects.create(
@@ -103,7 +156,8 @@ class RedundancyManager:
                 logger.info(f"Created replica for chunk {chunk.id} on node {node.name}")
 
             except Exception as e:
-                logger.error(f"Failed to create replica on node {node.name}: {str(e)}")
+                node_name = node.name if node else "None"
+                logger.error(f"Failed to create replica on node {node_name}: {str(e)}")
 
         return replicas_created
 

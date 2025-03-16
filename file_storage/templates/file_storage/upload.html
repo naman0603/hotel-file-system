@@ -3,40 +3,39 @@
 {% block content %}
 <div class="upload-container">
     <h1>Upload File</h1>
-    
-    {% if messages %}
-    <div class="messages">
-        {% for message in messages %}
-            <div class="message {{ message.tags }}">
-                {{ message }}
-            </div>
-        {% endfor %}
+
+<!--    <div id="message-container">-->
+<!--        {% if messages %}-->
+<!--            {% for message in messages %}-->
+<!--                <div class="message {{ message.tags }}">-->
+<!--                    {{ message }}-->
+<!--                </div>-->
+<!--            {% endfor %}-->
+<!--        {% endif %}-->
+<!--    </div>-->
+
+    {% if not servers_ready %}
+    <div class="server-status warning">
+        <i class="fas fa-exclamation-triangle"></i>
+        <span>Warning: Only {{ available_nodes }} storage servers are currently available (minimum {{ minimum_nodes_required }} required).</span>
+    </div>
+    {% else %}
+    <div class="server-status healthy">
+        <i class="fas fa-check-circle"></i>
+        <span>{{ available_nodes }} storage servers are currently active and ready.</span>
     </div>
     {% endif %}
-    
+
     <form method="post" enctype="multipart/form-data">
         {% csrf_token %}
-        <div class="form-group">
-            <label for="{{ form.file.id_for_label }}">{{ form.file.label }}</label>
-            {{ form.file }}
-            {% if form.file.help_text %}
-                <small class="help-text">{{ form.file.help_text }}</small>
-            {% endif %}
-            {% if form.file.errors %}
-                <div class="error">{{ form.file.errors }}</div>
-            {% endif %}
-        </div>
-        
-        <div class="form-group">
-            <label for="{{ form.description.id_for_label }}">{{ form.description.label }}</label>
-            {{ form.description }}
-            {% if form.description.help_text %}
-                <small class="help-text">{{ form.description.help_text }}</small>
-            {% endif %}
-        </div>
-        
+
+        <!-- Render entire form at once -->
+        {{ form.as_p }}
+
         <div class="form-actions">
-            <button type="submit" class="btn btn-primary">Upload</button>
+            <button type="submit" class="btn btn-primary" {% if not servers_ready %}disabled{% endif %}>
+                Upload
+            </button>
             <a href="{% url 'file_storage:dashboard' %}" class="btn btn-secondary">Cancel</a>
         </div>
     </form>
@@ -51,25 +50,6 @@
         border-radius: 5px;
         box-shadow: 0 2px 5px rgba(0,0,0,0.1);
     }
-    .form-group {
-        margin-bottom: 20px;
-    }
-    .form-group label {
-        display: block;
-        margin-bottom: 5px;
-        font-weight: bold;
-    }
-    .form-group input, .form-group textarea {
-        width: 100%;
-        padding: 10px;
-        border: 1px solid #ddd;
-        border-radius: 3px;
-    }
-    .help-text {
-        color: #666;
-        display: block;
-        margin-top: 5px;
-    }
     .form-actions {
         margin-top: 30px;
     }
@@ -83,13 +63,17 @@
         background: #007bff;
         color: white;
     }
+    .btn-primary:disabled {
+        background: #6c757d;
+        cursor: not-allowed;
+    }
     .btn-secondary {
         background: #6c757d;
         color: white;
         text-decoration: none;
         margin-left: 10px;
     }
-    .messages {
+    #message-container {
         margin-bottom: 20px;
     }
     .message {
@@ -104,6 +88,22 @@
     .error {
         background: #f8d7da;
         color: #721c24;
+    }
+    .server-status {
+        padding: 10px 15px;
+        border-radius: 3px;
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    .server-status.warning {
+        background: #fff3cd;
+        color: #856404;
+    }
+    .server-status.healthy {
+        background: #d4edda;
+        color: #155724;
     }
 </style>
 {% endblock %}

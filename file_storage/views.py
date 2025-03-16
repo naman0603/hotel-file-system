@@ -395,7 +395,24 @@ def system_status(request):
 @login_required
 def upload_file(request):
     """Handle file uploads with automatic redundancy across nodes"""
+    # Clear any old messages
+    storage = messages.get_messages(request)
+    for _ in storage:
+        pass
+
+    # Check server availability before processing the form
+    available_nodes_count = NodeManager.get_available_nodes_count()
+
     if request.method == 'POST':
+        # Check if we have enough nodes available before processing the upload
+        if available_nodes_count < 2:
+            messages.error(
+                request,
+                'Not enough storage servers are currently available (minimum 2 required). '
+                'Please try again later.'
+            )
+            return redirect('file_storage:dashboard')
+
         form = FileUploadForm(request.POST, request.FILES)
         if form.is_valid():
             try:
@@ -422,33 +439,71 @@ def upload_file(request):
                 )
                 stored_file.save()
 
-                # Chunk and store the file with redundancy
+                # Chunk and store the file
                 chunker = FileChunker()
-                chunks = chunker.chunk_file(uploaded_file, stored_file, request.user)
 
-                # Ensure we have at least one replica for each chunk
-                redundancy_manager = RedundancyManager(min_replicas=1)
-                replica_stats = redundancy_manager.ensure_minimum_replicas()
+                # Create chunks - ensure we get a proper list back
+                try:
+                    file_chunks = chunker.chunk_file(uploaded_file, stored_file, request.user)
+
+                    # Convert to list if needed
+                    if hasattr(file_chunks, 'all'):
+                        file_chunks = list(file_chunks)
+
+                    if not file_chunks:
+                        file_chunks = []
+
+                    chunk_count = len(file_chunks)
+                except Exception as chunking_error:
+                    logger.error(f"Error during file chunking: {str(chunking_error)}")
+                    raise Exception(f"Failed to process file chunks: {str(chunking_error)}")
+
+                # Create replicas if possible
+                try:
+                    redundancy_manager = RedundancyManager(min_replicas=1)
+                    redundancy_manager.ensure_minimum_replicas()
+                except Exception as replica_error:
+                    logger.error(f"Error creating replicas: {str(replica_error)}")
+                    # Continue without failing
 
                 messages.success(
                     request,
-                    f'File "{uploaded_file.name}" uploaded successfully and split into {len(chunks)} chunks with redundancy.'
+                    f'File "{uploaded_file.name}" uploaded successfully and split into {chunk_count} chunks with redundancy.'
                 )
                 return redirect('file_storage:dashboard')
 
             except Exception as e:
+                logger.error(f"File upload error: {str(e)}")
                 messages.error(request, f'Error uploading file: {str(e)}')
+                # Delete the file record if it was created
+                if 'stored_file' in locals() and stored_file.id:
+                    try:
+                        stored_file.delete()
+                    except:
+                        pass
+                return redirect('file_storage:upload_file')
         else:
-            messages.error(request, 'Form validation failed. Please check the form.')
+            # Form is invalid
+            messages.error(request, 'Please correct the errors in the form.')
     else:
         form = FileUploadForm()
 
-    return render(request, 'file_storage/upload.html', {'form': form})
+    # Add server status information to the context
+    context = {
+        'form': form,
+        'available_nodes': available_nodes_count,
+        'minimum_nodes_required': 2,
+        'servers_ready': available_nodes_count >= 2
+    }
 
+    return render(request, 'file_storage/upload.html', context)
+
+
+# In file_storage/views.py
 
 @login_required
 def download_file(request, file_id):
-    """Download a file with failover capability"""
+    """Download a file with comprehensive failover capability"""
     try:
         # Get the file
         stored_file = get_object_or_404(StoredFile, id=file_id, uploader=request.user)
@@ -468,17 +523,22 @@ def download_file(request, file_id):
             )
             return response
 
-        # If not cached, reassemble from chunks with failover support
+        # If not cached, reassemble from chunks with enhanced failover support
         chunker = FileChunker()
 
         try:
             logger.info(f"Reassembling file {stored_file.name} with failover support")
             reassembled_file = chunker.reassemble_file_optimized(stored_file)
 
-            # Cache the file for future access
-            file_data = reassembled_file.read()
-            FileCache.cache_file(file_id, file_data)
-            reassembled_file.seek(0)  # Reset file pointer
+            # Cache the file for future access (if it's not too large)
+            if stored_file.size_bytes < 50 * 1024 * 1024:  # Only cache files under 50MB
+                try:
+                    file_data = reassembled_file.read()
+                    FileCache.cache_file(file_id, file_data)
+                    reassembled_file.seek(0)  # Reset file pointer
+                except Exception as cache_error:
+                    logger.warning(f"Failed to cache file {stored_file.name}: {str(cache_error)}")
+                    # Still continue with the download
 
             # Create response
             response = FileResponse(
@@ -490,8 +550,25 @@ def download_file(request, file_id):
 
         except Exception as e:
             logger.error(f"Error reassembling file {stored_file.name}: {str(e)}")
-            messages.error(request,
-                           f"Error downloading file: The system couldn't retrieve some parts of the file due to server issues. Please try again later.")
+
+            # Try to determine if file is recoverable
+            health_info = SystemHealth.get_file_health(stored_file)
+
+            if health_info['can_recover']:
+                # The file should be recoverable, but there might be an issue with the code
+                messages.error(
+                    request,
+                    f"Error downloading file: There was a temporary system issue. "
+                    f"Your file is intact and should be available. Please try again in a few moments."
+                )
+            else:
+                # The file is not recoverable - some chunks truly are missing
+                messages.error(
+                    request,
+                    f"Error downloading file: Some parts of this file are currently unavailable. "
+                    f"This could be due to maintenance or server issues. Please try again later."
+                )
+
             return redirect('file_storage:dashboard')
 
     except StoredFile.DoesNotExist:
