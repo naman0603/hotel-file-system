@@ -45,7 +45,7 @@
                         <td>{{ file.file_type }}</td>
                         <td>{{ file.upload_date }}</td>
                         <td>
-                            <a href="{% url 'file_storage:download_file' file.id %}" class="btn">Download</a>
+                            <a href="{% url 'file_storage:download_file' file.id %}" class="btn" onclick="showLoader(); return true;">Download</a>
                         </td>
                     </tr>
                     {% endfor %}

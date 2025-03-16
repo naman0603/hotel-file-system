@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="error-container">
+    <h2>Download Error</h2>
+    <div class="error-message">
+        {{ error_message }}
+    </div>
+    <div class="error-actions">
+        {% if file_id %}
+        <a href="{% url 'file_storage:download_file' file_id %}" class="btn btn-primary" onclick="showLoader(); return true;">Try Again</a>
+        {% endif %}
+        <a href="{% url 'file_storage:dashboard' %}" class="btn btn-secondary">Back to Dashboard</a>
+    </div>
+</div>
+
+<style>
+    .error-container {
+        max-width: 600px;
+        margin: 50px auto;
+        background-color: white;
+        padding: 30px;
+        border-radius: 5px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        text-align: center;
+    }
+    .error-message {
+        margin: 20px 0;
+        color: #721c24;
+        background-color: #f8d7da;
+        padding: 15px;
+        border-radius: 4px;
+    }
+    .error-actions {
+        margin-top: 20px;
+    }
+    .btn {
+        margin: 0 10px;
+    }
+</style>
+
+<script>
+    // Hide the loader when this page loads
+    document.addEventListener('DOMContentLoaded', function() {
+        if (typeof hideLoader === 'function') {
+            hideLoader();
+        }
+    });
+</script>
+{% endblock %}

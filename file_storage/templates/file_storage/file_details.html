@@ -79,7 +79,10 @@
     </div>
 
     <div class="actions">
-        <a href="{% url 'file_storage:download_file' file.id %}" class="btn btn-primary">Download File</a>
+        <a href="{% url 'file_storage:download_file' file.id %}" class="btn btn-primary" onclick="showLoader(); return true;" download>
+            <i class="fas fa-download"></i> Download File
+        </a>
+
         <a href="{% url 'file_storage:dashboard' %}" class="btn btn-secondary">Back to Dashboard</a>
     </div>
 </div>

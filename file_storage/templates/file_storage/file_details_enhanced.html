@@ -10,9 +10,10 @@
         </div>
         <h1>{{ file.name }}</h1>
         <div class="file-actions">
-            <a href="{% url 'file_storage:download_file' file.id %}" class="btn btn-primary">
-                <i class="fas fa-download"></i> Download
-            </a>
+                        <!-- In file_storage/templates/file_storage/file_details_enhanced.html -->
+            <!-- Find the download button and replace it with: -->
+            <a href="{% url 'file_storage:download_file' file.id %}" class="btn" onclick="showLoader(); return true;">Download</a>
+
             {% if not file_cached %}
             <a href="{% url 'file_storage:cache_file' file.id %}" class="btn">
                 <i class="fas fa-bolt"></i> Cache for Fast Access
