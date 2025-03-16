@@ -55,7 +55,7 @@
                 </div>
 
                 <div class="node-actions">
-                    <form method="post" action="{% url 'file_storage:change_node_status' node.id %}">
+                    <form method="post" action="/nodes/{{ node.id }}/status/">
                         {% csrf_token %}
                         {% if node.status != 'active' %}
                         <input type="hidden" name="status" value="active">

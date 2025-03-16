@@ -5,6 +5,7 @@ import uuid
 from django.contrib import messages
 from django.contrib.auth import logout
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.core.cache import cache
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
@@ -18,7 +19,7 @@ from django.utils import timezone
 from .forms import FileUploadForm
 from .health import SystemHealth
 from .models import FileNode, FileChunk, StoredFile, ChunkStatus
-from .node_manager import NodeManager
+from .node_manager import NodeManager, logger
 from .redundancy import RedundancyManager
 from .retrieval import FileCache
 from .utils import FileChunker
@@ -26,10 +27,21 @@ from .utils import FileChunker
 
 @login_required
 @user_passes_test(lambda u: u.is_staff)
+@login_required
+@user_passes_test(lambda u: u.is_staff)
 def distributed_dashboard(request):
     """Dashboard for monitoring the distributed system"""
-    # Get all nodes with health information
-    nodes = FileNode.objects.all().order_by('priority')
+    # Get unique nodes with health information
+    all_nodes = FileNode.objects.all().order_by('priority')
+
+    # Create a dictionary to filter unique nodes
+    unique_nodes = {}
+    for node in all_nodes:
+        key = f"{node.hostname}:{node.port}"
+        if key not in unique_nodes:
+            unique_nodes[key] = node
+
+    nodes = list(unique_nodes.values())
     node_data = []
 
     for node in nodes:
@@ -39,9 +51,6 @@ def distributed_dashboard(request):
 
         if node.status != 'active':
             health_status = "inactive"
-            health_percentage = 0
-        elif not NodeManager.check_node_availability(node):
-            health_status = "critical"
             health_percentage = 0
         else:
             # Count chunks on this node
@@ -146,6 +155,10 @@ def change_node_status(request, node_id):
             old_status = node.status
             node.status = status
             node.save()
+
+            # Clear cache to ensure updated status is shown
+            cache_key = "node_load_stats"
+            cache.delete(cache_key)
 
             messages.success(request, f"Node '{node.name}' status changed from '{old_status}' to '{status}'.")
 
@@ -381,7 +394,7 @@ def system_status(request):
 
 @login_required
 def upload_file(request):
-    """Handle file uploads with chunking"""
+    """Handle file uploads with automatic redundancy across nodes"""
     if request.method == 'POST':
         form = FileUploadForm(request.POST, request.FILES)
         if form.is_valid():
@@ -409,13 +422,17 @@ def upload_file(request):
                 )
                 stored_file.save()
 
-                # Chunk and store the file
+                # Chunk and store the file with redundancy
                 chunker = FileChunker()
                 chunks = chunker.chunk_file(uploaded_file, stored_file, request.user)
 
+                # Ensure we have at least one replica for each chunk
+                redundancy_manager = RedundancyManager(min_replicas=1)
+                replica_stats = redundancy_manager.ensure_minimum_replicas()
+
                 messages.success(
                     request,
-                    f'File "{uploaded_file.name}" uploaded successfully and split into {len(chunks)} chunks.'
+                    f'File "{uploaded_file.name}" uploaded successfully and split into {len(chunks)} chunks with redundancy.'
                 )
                 return redirect('file_storage:dashboard')
 
@@ -429,35 +446,56 @@ def upload_file(request):
     return render(request, 'file_storage/upload.html', {'form': form})
 
 
-# Update the download_file view
 @login_required
 def download_file(request, file_id):
-    """Download a file by reassembling chunks"""
+    """Download a file with failover capability"""
     try:
         # Get the file
-        stored_file = StoredFile.objects.get(id=file_id, uploader=request.user)
+        stored_file = get_object_or_404(StoredFile, id=file_id, uploader=request.user)
 
         # Update last accessed time
         stored_file.last_accessed = timezone.now()
         stored_file.save()
 
-        # Reassemble the file from chunks
-        chunker = FileChunker()
-        reassembled_file = chunker.reassemble_file(stored_file)
+        # First try to get from cache
+        cached_file = FileCache.get_cached_file(file_id)
+        if cached_file:
+            logger.info(f"Serving cached file {stored_file.name}")
+            response = FileResponse(
+                cached_file,
+                as_attachment=True,
+                filename=stored_file.original_filename
+            )
+            return response
 
-        # Create response
-        response = FileResponse(
-            reassembled_file,
-            as_attachment=True,
-            filename=stored_file.original_filename
-        )
-        return response
+        # If not cached, reassemble from chunks with failover support
+        chunker = FileChunker()
+
+        try:
+            logger.info(f"Reassembling file {stored_file.name} with failover support")
+            reassembled_file = chunker.reassemble_file_optimized(stored_file)
+
+            # Cache the file for future access
+            file_data = reassembled_file.read()
+            FileCache.cache_file(file_id, file_data)
+            reassembled_file.seek(0)  # Reset file pointer
+
+            # Create response
+            response = FileResponse(
+                reassembled_file,
+                as_attachment=True,
+                filename=stored_file.original_filename
+            )
+            return response
+
+        except Exception as e:
+            logger.error(f"Error reassembling file {stored_file.name}: {str(e)}")
+            messages.error(request,
+                           f"Error downloading file: The system couldn't retrieve some parts of the file due to server issues. Please try again later.")
+            return redirect('file_storage:dashboard')
 
     except StoredFile.DoesNotExist:
         raise Http404("File not found")
-    except Exception as e:
-        messages.error(request, f"Error downloading file: {str(e)}")
-        return redirect('file_storage:dashboard')
 
 @login_required
 def file_details(request, file_id):

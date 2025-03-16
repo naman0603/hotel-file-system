@@ -43,4 +43,6 @@ urlpatterns = [
     path('accounts/logout/', views.logout_view, name='logout'),
     path('distributed/', views.distributed_dashboard, name='distributed_dashboard'),
 
+    path('nodes/<int:node_id>/status/', views.change_node_status, name='change_node_status'),
+    path('files/<uuid:file_id>/replicate/', views.replicate_file, name='replicate_file'),
 ]

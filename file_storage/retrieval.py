@@ -8,6 +8,7 @@ from .models import FileNode, FileChunk, ChunkStatus
 logger = logging.getLogger(__name__)
 
 
+# Add this class to file_storage/retrieval.py if not already present
 class NodeSelector:
     """Utility for selecting optimal nodes for file retrieval"""
 
@@ -15,20 +16,10 @@ class NodeSelector:
     def get_nearest_node(nodes):
         """
         Determine the nearest node based on latency
-        In a real distributed system, this would use network metrics
-
-        For this implementation, we'll simulate by returning active nodes
-        with the fastest response time
+        For testing, we'll just use the first active node
         """
         active_nodes = [node for node in nodes if node.status == 'active']
-        if not active_nodes:
-            return None
-
-        # In a real implementation, you would measure actual latency
-        # For now, we'll sort by hostname (as a placeholder)
-        # In production, you'd replace this with actual latency measurements
-        sorted_nodes = sorted(active_nodes, key=lambda n: n.hostname)
-        return sorted_nodes[0] if sorted_nodes else None
+        return active_nodes[0] if active_nodes else None
 
     @staticmethod
     def get_least_loaded_node(nodes):
@@ -47,21 +38,12 @@ class NodeSelector:
     def select_node_for_retrieval(file_id, chunk_number):
         """
         Select the best node for retrieving a specific chunk
-
-        Strategy:
-        1. Check if there's a cached preferred node
-        2. Try to find a healthy chunk on any node
-        3. Fall back to replicas if needed
-
-        Returns:
-            tuple: (FileChunk, FileNode) or (None, None) if not found
         """
-        # Check cache first for recently used node for this file/chunk
+        # Check cache first
         cache_key = f"preferred_node_{file_id}_{chunk_number}"
         preferred_node_id = cache.get(cache_key)
 
         if preferred_node_id:
-            # Try to get chunk from preferred node
             try:
                 node = FileNode.objects.get(id=preferred_node_id, status='active')
                 chunk = FileChunk.objects.get(
@@ -70,14 +52,11 @@ class NodeSelector:
                     node=node,
                     status=ChunkStatus.UPLOADED
                 )
-                logger.info(f"Using cached preferred node {node.name} for file {file_id} chunk {chunk_number}")
                 return chunk, node
             except (FileNode.DoesNotExist, FileChunk.DoesNotExist):
-                # Cached node is no longer valid, continue with regular selection
                 cache.delete(cache_key)
-                pass
 
-        # Try to find a non-replica chunk first
+        # Try to find a non-replica chunk
         try:
             chunk = FileChunk.objects.get(
                 file_id=file_id,
@@ -85,7 +64,6 @@ class NodeSelector:
                 is_replica=False,
                 status=ChunkStatus.UPLOADED
             )
-            # Cache this node as preferred for future retrievals
             cache.set(cache_key, chunk.node.id, timeout=3600)  # 1 hour
             return chunk, chunk.node
         except FileChunk.DoesNotExist:
@@ -98,8 +76,7 @@ class NodeSelector:
             ).first()
 
             if replica:
-                # Cache replica node
-                cache.set(cache_key, replica.node.id, timeout=3600)  # 1 hour
+                cache.set(cache_key, replica.node.id, timeout=3600)
                 return replica, replica.node
 
         return None, None

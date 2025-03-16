@@ -11,10 +11,7 @@ logger = logging.getLogger(__name__)
 class NodeManager:
     """Manages a cluster of storage nodes"""
 
-    @staticmethod
-    def get_active_nodes():
-        """Get all active nodes in the cluster"""
-        return list(FileNode.objects.filter(status='active').order_by('priority'))
+
 
     @staticmethod
     def get_primary_node():
@@ -35,13 +32,30 @@ class NodeManager:
         return None
 
     @staticmethod
+    def get_active_nodes():
+        """Get all active nodes in the cluster"""
+        # Always work with a list, not a QuerySet
+        return list(FileNode.objects.filter(status='active').order_by('priority'))
+
+    @staticmethod
     def check_node_availability(node):
         """Check if a node is available by pinging its health endpoint"""
         try:
             url = f"http://{node.hostname}:{node.port}/minio/health/ready"
-            response = requests.get(url, timeout=5)
-            return response.status_code == 200
-        except requests.RequestException:
+            logger.info(f"Checking availability of node {node.name} at {url}")
+
+            response = requests.get(url, timeout=3)
+            is_available = response.status_code == 200
+
+            if is_available:
+                logger.info(f"Node {node.name} is available")
+            else:
+                logger.warning(f"Node {node.name} returned status code {response.status_code}")
+
+            return is_available
+        except requests.RequestException as e:
+            logger.warning(f"Node {node.name} health check failed: {str(e)}")
+            # During development, you might want to consider nodes available even if the health check fails
             return False
 
     @staticmethod
@@ -154,3 +168,32 @@ class NodeManager:
 
         # If no suitable node found, elect a new one
         return NodeManager.elect_best_node_for_upload()
+
+    @staticmethod
+    def get_node_client(node):
+        """Get a MinIO client for a specific node"""
+        from minio import Minio
+
+        # Use appropriate hostname based on environment
+        hostname = node.hostname
+        port = node.port
+
+        logger.info(f"Connecting to MinIO at {hostname}:{port}")
+
+        client = Minio(
+            f"{hostname}:{port}",
+            access_key=node.access_key,
+            secret_key=node.secret_key,
+            secure=False  # Use True for HTTPS
+        )
+
+        # Ensure bucket exists
+        try:
+            if not client.bucket_exists(node.bucket_name):
+                client.make_bucket(node.bucket_name)
+                logger.info(f"Created bucket {node.bucket_name} on {node.name}")
+        except Exception as e:
+            logger.error(f"Error ensuring bucket on {node.name}: {str(e)}")
+            # Don't raise the exception - we'll handle it at higher levels
+
+        return client

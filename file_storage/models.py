@@ -5,7 +5,6 @@ from django.contrib.auth.models import User
 import uuid
 
 
-# Update in file_storage/models.py
 class FileNode(models.Model):
     """Represents a storage node in the distributed system"""
     name = models.CharField(max_length=100)
@@ -34,6 +33,7 @@ class FileNode(models.Model):
             FileNode.objects.filter(is_primary=True).exclude(id=self.id).update(is_primary=False)
         super().save(*args, **kwargs)
 
+
 class StoredFile(models.Model):
     """Metadata for files stored in the system"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -51,7 +51,6 @@ class StoredFile(models.Model):
         return self.name
 
 
-# Update or add the ChunkStatus model
 class ChunkStatus(models.TextChoices):
     PENDING = 'pending', 'Pending'
     UPLOADING = 'uploading', 'Uploading'
@@ -79,7 +78,8 @@ class FileChunk(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ('file', 'chunk_number', 'is_replica')
+        # Update to allow multiple replicas per chunk by including node in the unique constraint
+        unique_together = ('file', 'chunk_number', 'is_replica', 'node')
         ordering = ['chunk_number']
 
     def __str__(self):
