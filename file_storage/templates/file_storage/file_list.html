@@ -89,9 +89,8 @@
                     </p>
                 </div>
                 <div class="file-actions">
-                    <a href="{% url 'file_storage:download_file' file.id %}" class="btn btn-sm" title="Download">
-                        <i class="fas fa-download"></i>
-                    </a>
+                    <a href="{% url 'file_storage:download_file' file.id %}" class="btn" onclick="showLoader(); return true;">Download</a>
+
                     <a href="{% url 'file_storage:file_details' file.id %}" class="btn btn-sm" title="Details">
                         <i class="fas fa-info-circle"></i>
                     </a>

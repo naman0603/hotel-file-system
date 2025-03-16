@@ -11,7 +11,7 @@ from django.core.files.storage import default_storage
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.db.models import Count, Sum
 from django.db.models import Q
-from django.http import FileResponse, Http404
+from django.http import FileResponse, Http404, HttpResponse
 from django.http import JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
@@ -502,6 +502,12 @@ def upload_file(request):
 # In file_storage/views.py
 
 @login_required
+# In file_storage/views.py
+
+@login_required
+# In file_storage/views.py
+
+@login_required
 def download_file(request, file_id):
     """Download a file with comprehensive failover capability"""
     try:
@@ -516,11 +522,14 @@ def download_file(request, file_id):
         cached_file = FileCache.get_cached_file(file_id)
         if cached_file:
             logger.info(f"Serving cached file {stored_file.name}")
-            response = FileResponse(
-                cached_file,
-                as_attachment=True,
-                filename=stored_file.original_filename
-            )
+
+            # Create response with even stronger download headers
+            response = HttpResponse(cached_file.read())
+            response['Content-Type'] = 'application/octet-stream'  # Force binary download
+            response['Content-Disposition'] = f'attachment; filename="{stored_file.original_filename}"'
+            response['Content-Length'] = len(cached_file.read())
+            cached_file.seek(0)  # Reset after reading
+
             return response
 
         # If not cached, reassemble from chunks with enhanced failover support
@@ -530,49 +539,45 @@ def download_file(request, file_id):
             logger.info(f"Reassembling file {stored_file.name} with failover support")
             reassembled_file = chunker.reassemble_file_optimized(stored_file)
 
+            # Read the entire file into memory for serving
+            file_data = reassembled_file.read()
+
             # Cache the file for future access (if it's not too large)
             if stored_file.size_bytes < 50 * 1024 * 1024:  # Only cache files under 50MB
                 try:
-                    file_data = reassembled_file.read()
                     FileCache.cache_file(file_id, file_data)
-                    reassembled_file.seek(0)  # Reset file pointer
                 except Exception as cache_error:
                     logger.warning(f"Failed to cache file {stored_file.name}: {str(cache_error)}")
-                    # Still continue with the download
 
-            # Create response
-            response = FileResponse(
-                reassembled_file,
-                as_attachment=True,
-                filename=stored_file.original_filename
-            )
+            # Create response with stronger download headers
+            response = HttpResponse(file_data)
+            response['Content-Type'] = 'application/octet-stream'  # Force binary download
+            response['Content-Disposition'] = f'attachment; filename="{stored_file.original_filename}"'
+            response['Content-Length'] = len(file_data)
+
+            # Additional headers to prevent display in browser
+            response['X-Content-Type-Options'] = 'nosniff'
+            response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            response['Pragma'] = 'no-cache'
+            response['Expires'] = '0'
+
             return response
 
         except Exception as e:
             logger.error(f"Error reassembling file {stored_file.name}: {str(e)}")
 
-            # Try to determine if file is recoverable
-            health_info = SystemHealth.get_file_health(stored_file)
-
-            if health_info['can_recover']:
-                # The file should be recoverable, but there might be an issue with the code
-                messages.error(
-                    request,
-                    f"Error downloading file: There was a temporary system issue. "
-                    f"Your file is intact and should be available. Please try again in a few moments."
-                )
-            else:
-                # The file is not recoverable - some chunks truly are missing
-                messages.error(
-                    request,
-                    f"Error downloading file: Some parts of this file are currently unavailable. "
-                    f"This could be due to maintenance or server issues. Please try again later."
-                )
-
-            return redirect('file_storage:dashboard')
+            # Return error page that will hide the loader
+            return render(request, 'file_storage/download_error.html', {
+                'error_message': f"Error downloading file: {str(e)}",
+                'file_id': file_id
+            })
 
     except StoredFile.DoesNotExist:
-        raise Http404("File not found")
+        # File not found
+        return render(request, 'file_storage/download_error.html', {
+            'error_message': "The requested file does not exist or you don't have permission to access it.",
+            'file_id': None
+        })
 
 @login_required
 def file_details(request, file_id):
