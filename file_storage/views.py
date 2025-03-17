@@ -143,16 +143,21 @@ def distributed_dashboard(request):
     return render(request, 'file_storage/distributed_dashboard.html', context)
 
 
+# In file_storage/views.py, update the relevant method
 @login_required
 @user_passes_test(lambda u: u.is_staff)
 def change_node_status(request, node_id):
     """Change a node's status"""
     if request.method == 'POST':
         node = get_object_or_404(FileNode, id=node_id)
+        old_status = node.status
         status = request.POST.get('status')
 
         if status in ['active', 'inactive', 'maintenance']:
-            old_status = node.status
+            # Store whether node is being activated
+            is_activating = (old_status != 'active' and status == 'active')
+
+            # Update the node status
             node.status = status
             node.save()
 
@@ -167,6 +172,15 @@ def change_node_status(request, node_id):
                 new_primary = NodeManager.get_primary_node()
                 if new_primary:
                     messages.info(request, f"Node '{new_primary.name}' is now the primary node.")
+
+            # Process pending replications if node was activated and has pending replications
+            if is_activating and node.pending_replications.exists():
+                from django.core.management import call_command
+                try:
+                    call_command('process_pending_replications', '--max-attempts=5')
+                    messages.success(request, f"Processed pending replications for node '{node.name}'.")
+                except Exception as e:
+                    messages.error(request, f"Error processing pending replications: {str(e)}")
         else:
             messages.error(request, f"Invalid status: {status}")
 
