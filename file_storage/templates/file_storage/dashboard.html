@@ -86,7 +86,7 @@
                         <td>{{ file.upload_date|date:"M d, Y, g:i a" }}</td>
                         <td class="actions-cell">
                             <div class="action-buttons">
-                                <a href="{% url 'file_storage:download_file' file.id %}" class="action-btn download-btn" title="Download" onclick="showLoader()">
+                                <a href="{% url 'file_storage:download_file' file.id %}" class="action-btn download-btn" title="Download" onclick="directDownload(this.href); return false;">
                                     <i class="fas fa-download"></i>
                                 </a>
                                 <a href="{% url 'file_storage:file_details' file.id %}" class="action-btn details-btn" title="Details">
@@ -481,6 +481,32 @@
             return value * (units[unit] || 1);
         }
         return 0;
+    }
+
+    // Add initiateDownload function
+    function initiateDownload(url) {
+        showLoader();
+
+        // Create a hidden iframe for download
+        const downloadFrame = document.createElement('iframe');
+        downloadFrame.style.display = 'none';
+        downloadFrame.id = 'downloadFrame';
+        document.body.appendChild(downloadFrame);
+
+        // Set up an event listener to detect when navigation completes
+        downloadFrame.onload = function() {
+            // Hide the loader after a slight delay to ensure file download is initiated
+            setTimeout(function() {
+                hideLoader();
+                // Clean up the iframe
+                document.body.removeChild(downloadFrame);
+            }, 2000);
+        };
+
+        // Navigate to download URL
+        downloadFrame.src = url;
+
+        return false; // Prevent default link behavior
     }
 </script>
 {% endblock %}

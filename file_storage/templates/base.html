@@ -325,6 +325,32 @@
         // Global variable to track download state
         let downloadInProgress = false;
 
+        // Function to download file with proper loading indicator
+        function initiateDownload(url) {
+            showLoader();
+
+            // Create a hidden iframe for download
+            const downloadFrame = document.createElement('iframe');
+            downloadFrame.style.display = 'none';
+            downloadFrame.id = 'downloadFrame';
+            document.body.appendChild(downloadFrame);
+
+            // Set up an event listener to detect when navigation completes
+            downloadFrame.onload = function() {
+                // Hide the loader after a slight delay to ensure file download is initiated
+                setTimeout(function() {
+                    hideLoader();
+                    // Clean up the iframe
+                    document.body.removeChild(downloadFrame);
+                }, 2000);
+            };
+
+            // Navigate to download URL
+            downloadFrame.src = url;
+
+            return false; // Prevent default link behavior
+        }
+
         // Function to show loading overlay with progress indicators
         function showLoader() {
             document.getElementById('loadingOverlay').classList.add('active');
@@ -332,6 +358,13 @@
 
             // Simulate progress
             simulateProgressForLargeDownload();
+
+            // Start a timer to auto-hide the loader if it's still showing after some time
+            setTimeout(function() {
+                if (downloadInProgress) {
+                    hideLoader();
+                }
+            }, 20000); // 20 seconds max wait time
 
             return true;  // Allow the click to continue
         }
@@ -385,7 +418,7 @@
 
             }, 250);
 
-            // When download completes, set to 100%
+            // Complete the progress bar after a reasonable time
             setTimeout(() => {
                 if (!downloadInProgress) {
                     clearInterval(progressInterval);
@@ -393,15 +426,13 @@
                 }
 
                 // After 15 seconds, assume download will be completed soon
-                if (downloadInProgress) {
-                    progressFill.style.width = "100%";
-                    progressText.innerText = "Download complete! Starting file save...";
+                progressFill.style.width = "100%";
+                progressText.innerText = "Download complete! Starting file save...";
 
-                    // Allow file download to start
-                    setTimeout(() => {
-                        hideLoader();
-                    }, 1000);
-                }
+                // Allow file download to start
+                setTimeout(() => {
+                    hideLoader();
+                }, 1000);
             }, 15000);
         }
 
@@ -431,6 +462,28 @@
         });
     </script>
 
+    <!-- Hidden elements for direct downloads -->
+<a id="directDownloadLink" style="display: none;"></a>
+
+<script>
+    // Function to handle direct downloads without iframe
+    function directDownload(url) {
+        showLoader();
+
+        // Set the URL to a hidden anchor element and click it
+        const link = document.getElementById('directDownloadLink');
+        link.href = url;
+        link.download = ''; // Force download
+        link.click();
+
+        // Hide loader after a timeout
+        setTimeout(function() {
+            hideLoader();
+        }, 3000);
+
+        return false; // Prevent default link behavior
+    }
+</script>
     {% block extra_scripts %}{% endblock %}
 </body>
 </html>

@@ -10,7 +10,7 @@
         </div>
         <h1>{{ file.name }}</h1>
         <div class="file-actions">
-            <a href="{% url 'file_storage:download_file' file.id %}" class="btn btn-primary">
+           <a href="{% url 'file_storage:download_file' file.id %}" class="btn btn-primary" onclick="directDownload(this.href); return false;">
                 <i class="fas fa-download"></i> Download
             </a>
             {% if not file_cached %}

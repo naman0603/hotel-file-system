@@ -280,6 +280,7 @@ class FileChunker:
                 chunk.delete()
             except Exception as e:
                 logger.error(f"Error cleaning up chunk {chunk.id}: {str(e)}")
+
     def reassemble_file_optimized(self, stored_file):
         """
         Reassemble a file from its chunks with comprehensive failover support

@@ -11,7 +11,7 @@ from django.core.files.storage import default_storage
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.db.models import Count, Sum
 from django.db.models import Q
-from django.http import FileResponse, Http404
+from django.http import FileResponse, Http404, HttpResponse
 from django.http import JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
@@ -572,6 +572,7 @@ def upload_file(request):
 # In file_storage/views.py
 
 @login_required
+@login_required
 def download_file(request, file_id):
     """Download a file with comprehensive failover capability"""
     try:
@@ -586,11 +587,12 @@ def download_file(request, file_id):
         cached_file = FileCache.get_cached_file(file_id)
         if cached_file:
             logger.info(f"Serving cached file {stored_file.name}")
-            response = FileResponse(
+            response = HttpResponse(
                 cached_file,
-                as_attachment=True,
-                filename=stored_file.original_filename
+                content_type=stored_file.content_type or 'application/octet-stream'
             )
+            response['Content-Disposition'] = f'attachment; filename="{stored_file.original_filename}"'
+            response['Content-Length'] = len(cached_file)
             return response
 
         # If not cached, reassemble from chunks with enhanced failover support
@@ -600,22 +602,25 @@ def download_file(request, file_id):
             logger.info(f"Reassembling file {stored_file.name} with failover support")
             reassembled_file = chunker.reassemble_file_optimized(stored_file)
 
+            # Read file data
+            file_data = reassembled_file.read()
+
             # Cache the file for future access (if it's not too large)
             if stored_file.size_bytes < 50 * 1024 * 1024:  # Only cache files under 50MB
                 try:
-                    file_data = reassembled_file.read()
                     FileCache.cache_file(file_id, file_data)
-                    reassembled_file.seek(0)  # Reset file pointer
                 except Exception as cache_error:
                     logger.warning(f"Failed to cache file {stored_file.name}: {str(cache_error)}")
                     # Still continue with the download
 
-            # Create response
-            response = FileResponse(
-                reassembled_file,
-                as_attachment=True,
-                filename=stored_file.original_filename
+            # Create response with explicit headers
+            response = HttpResponse(
+                file_data,
+                content_type=stored_file.content_type or 'application/octet-stream'
             )
+            response['Content-Disposition'] = f'attachment; filename="{stored_file.original_filename}"'
+            response['Content-Length'] = len(file_data)
+
             return response
 
         except Exception as e:
@@ -643,7 +648,6 @@ def download_file(request, file_id):
 
     except StoredFile.DoesNotExist:
         raise Http404("File not found")
-
 
 @login_required
 def file_details(request, file_id):
@@ -736,75 +740,6 @@ def download_file(request, file_id):
     except Exception as e:
         messages.error(request, f"Error downloading file: {str(e)}")
         return redirect('file_storage:dashboard')
-
-
-@login_required
-def analytics_dashboard(request):
-    """Dashboard for viewing file access analytics"""
-    # Get user's files
-    files = StoredFile.objects.filter(uploader=request.user).order_by('-last_accessed')
-
-    # Get access statistics
-    file_stats = []
-    total_access_count = 0
-    max_access_count = 1  # Avoid division by zero
-    cached_files_count = 0
-
-    for file in files:
-        # Get cache status
-        is_cached = FileCache.is_file_cached(file.id)
-        if is_cached:
-            cached_files_count += 1
-
-        access_count = FileCache.get_access_count(file.id)
-        total_access_count += access_count
-
-        if access_count > max_access_count:
-            max_access_count = access_count
-
-        # Get node distribution information
-        chunk_count = FileChunk.objects.filter(file=file, is_replica=False).count()
-
-        file_stats.append({
-            'file': file,
-            'is_cached': is_cached,
-            'access_count': access_count,
-            'last_accessed': file.last_accessed,
-            'chunk_count': chunk_count
-        })
-
-    # Sort by access count for most accessed files
-    most_accessed_files = sorted(
-        [{'name': stat['file'].name, 'access_count': stat['access_count']}
-         for stat in file_stats if stat['access_count'] > 0],
-        key=lambda x: x['access_count'],
-        reverse=True
-    )[:5]  # Top 5
-
-    # Get recently accessed files
-    recently_accessed_files = [
-                                  {'name': stat['file'].name, 'last_accessed': stat['file'].last_accessed}
-                                  for stat in file_stats if stat['file'].last_accessed
-                              ][:5]  # Top 5 most recent
-
-    # Calculate cache statistics - these would be more accurate in a real system
-    cache_hit_rate = round((total_access_count / (total_access_count + 10)) * 100) if total_access_count > 0 else 0
-    cache_space_utilization = round((cached_files_count / files.count()) * 100) if files.count() > 0 else 0
-
-    context = {
-        'file_stats': file_stats,
-        'total_files': files.count(),
-        'cached_files': cached_files_count,
-        'total_access_count': total_access_count,
-        'max_access_count': max_access_count,
-        'most_accessed_files': most_accessed_files,
-        'recently_accessed_files': recently_accessed_files,
-        'cache_hit_rate': cache_hit_rate,
-        'cache_space_utilization': cache_space_utilization
-    }
-
-    return render(request, 'file_storage/analytics_dashboard.html', context)
-
 
 @login_required
 def cache_file(request, file_id):
@@ -958,3 +893,69 @@ def enhanced_file_details(request, file_id):
 def logout_view(request):
     logout(request)
     return redirect('login')
+@login_required
+def analytics_dashboard(request):
+    """Dashboard for viewing file access analytics"""
+    # Get user's files
+    files = StoredFile.objects.filter(uploader=request.user).order_by('-last_accessed')
+
+    # Get access statistics
+    file_stats = []
+    total_access_count = 0
+    max_access_count = 1  # Avoid division by zero
+    cached_files_count = 0
+
+    for file in files:
+        # Get cache status
+        is_cached = FileCache.is_file_cached(file.id)
+        if is_cached:
+            cached_files_count += 1
+
+        access_count = FileCache.get_access_count(file.id)
+        total_access_count += access_count
+
+        if access_count > max_access_count:
+            max_access_count = access_count
+
+        # Get node distribution information
+        chunk_count = FileChunk.objects.filter(file=file, is_replica=False).count()
+
+        file_stats.append({
+            'file': file,
+            'is_cached': is_cached,
+            'access_count': access_count,
+            'last_accessed': file.last_accessed,
+            'chunk_count': chunk_count
+        })
+
+    # Sort by access count for most accessed files
+    most_accessed_files = sorted(
+        [{'name': stat['file'].name, 'access_count': stat['access_count']}
+         for stat in file_stats if stat['access_count'] > 0],
+        key=lambda x: x['access_count'],
+        reverse=True
+    )[:5]  # Top 5
+
+    # Get recently accessed files
+    recently_accessed_files = [
+        {'name': stat['file'].name, 'last_accessed': stat['file'].last_accessed}
+        for stat in file_stats if stat['file'].last_accessed
+    ][:5]  # Top 5 most recent
+
+    # Calculate cache statistics - these would be more accurate in a real system
+    cache_hit_rate = round((total_access_count / (total_access_count + 10)) * 100) if total_access_count > 0 else 0
+    cache_space_utilization = round((cached_files_count / files.count()) * 100) if files.count() > 0 else 0
+
+    context = {
+        'file_stats': file_stats,
+        'total_files': files.count(),
+        'cached_files': cached_files_count,
+        'total_access_count': total_access_count,
+        'max_access_count': max_access_count,
+        'most_accessed_files': most_accessed_files,
+        'recently_accessed_files': recently_accessed_files,
+        'cache_hit_rate': cache_hit_rate,
+        'cache_space_utilization': cache_space_utilization
+    }
+
+    return render(request, 'file_storage/analytics_dashboard.html', context)
