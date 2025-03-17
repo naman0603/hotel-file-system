@@ -32,10 +32,17 @@
         <h2>Storage Nodes Health</h2>
         <div class="node-cards">
             {% for node in nodes %}
-                <div class="node-card node-{{ node.status }} health-{{ node.health_status }}">
+                <div class="node-card node-{{ node.status }} {% if not node.is_available %}node-unavailable{% endif %}">
                     <h3>{{ node.name }}</h3>
                     <p class="node-hostname">{{ node.hostname }}:{{ node.port }}</p>
-                    <p class="node-status">Status: {{ node.status|title }}</p>
+                    <p class="node-status">
+                        Status:
+                        {% if node.is_available %}
+                            <span class="status-active">{{ node.status|title }}</span>
+                        {% else %}
+                            <span class="status-inactive">{% if node.status == 'active' %}Unavailable{% else %}{{ node.status|title }}{% endif %}</span>
+                        {% endif %}
+                    </p>
                     <p class="node-health">Health: {{ node.health_status|title }}</p>
                     <div class="health-meter">
                         <div class="meter-fill health-percentage-{{ node.chunks.health_percentage|floatformat:'0' }}"></div>
@@ -98,7 +105,6 @@
                             {% endif %}
                         </td>
                         <td>
-                            <a href="{% url 'file_storage:repair_file' file.id %}" class="btn btn-warning">Repair</a>
                             <a href="{% url 'file_storage:file_details' file.id %}" class="btn">Details</a>
                         </td>
                     </tr>
@@ -179,12 +185,20 @@
     .node-active.health-warning {
         border-left: 5px solid #ffc107;
     }
-    .node-active.health-critical {
+    .node-active.health-critical, .node-unavailable {
         border-left: 5px solid #dc3545;
     }
-    .node-inactive, .node-maintenance, .health-offline {
+    .node-inactive, .node-maintenance {
         border-left: 5px solid #6c757d;
         opacity: 0.7;
+    }
+    .status-active {
+        color: #28a745;
+        font-weight: bold;
+    }
+    .status-inactive {
+        color: #dc3545;
+        font-weight: bold;
     }
     .health-meter {
         height: 8px;
@@ -201,7 +215,10 @@
     .node-card.health-warning .meter-fill {
         background-color: #ffc107;
     }
-    .node-card.health-critical .meter-fill {
+    .node-card.health-critical .meter-fill,
+    .node-inactive .meter-fill,
+    .node-maintenance .meter-fill,
+    .node-unavailable .meter-fill {
         background-color: #dc3545;
     }
     .error-count {
@@ -270,12 +287,15 @@
         color: white;
         text-decoration: none;
         border-radius: 3px;
-        margin-right: 5px;
     }
-    .btn-warning {
-        background-color: #ffc107;
-        color: #212529;
-    }
+
+    /* Dynamically generate percentage width classes for health bars */
+    {% for i in "0123456789" %}
+        {% for j in "0123456789" %}
+            .health-percentage-{{ i }}{{ j }} { width: {{ i }}{{ j }}%; }
+        {% endfor %}
+    {% endfor %}
+    .health-percentage-100 { width: 100%; }
 
     @media (max-width: 768px) {
         .status-details, .node-cards {

@@ -210,27 +210,82 @@ def replicate_file(request, file_id):
 
     return redirect('file_storage:distributed_dashboard')
 
+
 @login_required
 def health_dashboard(request):
     """View for monitoring system health"""
-    # Get overall system health
-    system_status = SystemHealth.get_overall_status()
+    from .node_manager import NodeManager
 
-    # Get node health
+    # Get all nodes
     nodes = FileNode.objects.all()
-    node_health = [SystemHealth.get_node_health(node) for node in nodes]
+
+    # Transform nodes into the health data structure with real-time availability checking
+    node_health_data = []
+    for node in nodes:
+        # Check actual node availability
+        is_available = NodeManager.check_node_availability(node)
+
+        # If node is not available but database says it's active, we override the display status
+        display_status = node.status
+        if node.status == 'active' and not is_available:
+            # We don't change the database, just what we display
+            display_status = 'unavailable'
+
+        node_health = {
+            'id': node.id,
+            'name': node.name,
+            'status': display_status,  # Use our real-time checked status
+            'db_status': node.status,  # Keep original database status for reference
+            'health_status': "offline" if not is_available else "healthy",
+            'hostname': node.hostname,
+            'port': node.port,
+            'is_available': is_available,
+            'chunks': {
+                'total': node.stored_chunks.count(),
+                'corrupt': node.stored_chunks.filter(status='corrupt').count(),
+                'failed': node.stored_chunks.filter(status='failed').count(),
+                'health_percentage': 0 if not is_available else 100
+            }
+        }
+        node_health_data.append(node_health)
+
+    # Calculate system status based on actual availability
+    active_nodes = sum(1 for node in node_health_data if node['is_available'])
+    total_nodes = len(node_health_data)
+    node_health_percentage = (active_nodes / total_nodes) * 100 if total_nodes > 0 else 0
+
+    # Get chunk status
+    total_chunks = FileChunk.objects.count()
+    corrupt_chunks = FileChunk.objects.filter(status=ChunkStatus.CORRUPT).count()
+    failed_chunks = FileChunk.objects.filter(status=ChunkStatus.FAILED).count()
+    chunk_health = ((total_chunks - corrupt_chunks - failed_chunks) / total_chunks) * 100 if total_chunks > 0 else 100
+
+    # Determine system status
+    system_status = {
+        'status': 'critical' if node_health_percentage < 50 or chunk_health < 80 else
+        'warning' if node_health_percentage < 75 or chunk_health < 95 else
+        'healthy',
+        'nodes': {
+            'total': total_nodes,
+            'active': active_nodes,
+            'health_percentage': round(node_health_percentage, 1)
+        },
+        'chunks': {
+            'total': total_chunks,
+            'corrupt': corrupt_chunks,
+            'failed': failed_chunks,
+            'health_percentage': round(chunk_health, 1)
+        }
+    }
 
     # Get user files with health issues
     files = StoredFile.objects.filter(uploader=request.user)
     files_health = [SystemHealth.get_file_health(f) for f in files]
-
-    # Filter out None values before trying to access their keys
-    files_health = [f for f in files_health if f is not None]
-    files_with_issues = [f for f in files_health if f['health_status'] != 'healthy']
+    files_with_issues = [f for f in files_health if f and f['health_status'] != 'healthy']
 
     context = {
         'system_status': system_status,
-        'nodes': node_health,
+        'nodes': node_health_data,
         'files_with_issues': files_with_issues,
     }
 
@@ -589,18 +644,47 @@ def download_file(request, file_id):
     except StoredFile.DoesNotExist:
         raise Http404("File not found")
 
+
 @login_required
 def file_details(request, file_id):
     """Display detailed information about a file"""
     try:
         stored_file = StoredFile.objects.get(id=file_id, uploader=request.user)
-        chunks = stored_file.chunks.all().order_by('chunk_number')
+
+        # Get file health information
+        from .health import SystemHealth
+        file_health = SystemHealth.get_file_health(stored_file)
+
+        # Get all chunks for this file (including time information)
+        chunks = stored_file.chunks.all().order_by('chunk_number', 'is_replica').select_related('node')
+
+        # Calculate replica factor
+        original_chunks = chunks.filter(is_replica=False)
+        replica_chunks = chunks.filter(is_replica=True)
+        total_original_chunks = original_chunks.count()
+        total_replica_chunks = replica_chunks.count()
+        replica_factor = round(total_replica_chunks / total_original_chunks, 1) if total_original_chunks > 0 else 0
+
+        # Calculate average chunk size
+        avg_chunk_size = stored_file.size_bytes / total_original_chunks if total_original_chunks > 0 else 0
+
+        # Check if file is cached
+        from .retrieval import FileCache
+        file_cached = FileCache.is_file_cached(file_id)
+
+        # Get access count
+        access_count = FileCache.get_access_count(file_id)
 
         context = {
             'file': stored_file,
+            'file_health': file_health,
             'chunks': chunks,
-            'total_chunks': chunks.count(),
+            'total_chunks': total_original_chunks,
             'unique_nodes': len(set(chunk.node_id for chunk in chunks if chunk.node)),
+            'replica_factor': replica_factor,
+            'avg_chunk_size': avg_chunk_size,
+            'file_cached': file_cached,
+            'access_count': access_count
         }
 
         return render(request, 'file_storage/file_details.html', context)
