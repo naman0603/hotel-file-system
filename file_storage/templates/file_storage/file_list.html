@@ -5,12 +5,12 @@
     <div class="file-manager-header">
         <h1>File Manager</h1>
         <div class="header-actions">
-            <a href="{% url 'file_storage:upload_file' %}" class="btn btn-primary">
+            <a href="{% url 'file_storage:upload_file' %}" class="upload-button">
                 <i class="fas fa-upload"></i> Upload File
             </a>
         </div>
     </div>
-    
+
     <div class="filters-bar">
         <form method="get" action="{% url 'file_storage:file_list' %}" class="filter-form">
             <div class="filter-group">
@@ -56,7 +56,7 @@
             </form>
         </div>
     </div>
-    
+
     <div class="file-list-container">
         {% if files %}
         <div class="file-list">
@@ -135,7 +135,9 @@
             <a href="{% url 'file_storage:file_list' %}" class="btn btn-primary">Clear Filters</a>
             {% else %}
             <p>You haven't uploaded any files yet.</p>
-            <a href="{% url 'file_storage:upload_file' %}" class="btn btn-primary">Upload Your First File</a>
+            <a href="{% url 'file_storage:upload_file' %}" class="upload-button">
+                <i class="fas fa-upload"></i> Upload File
+            </a>
             {% endif %}
         </div>
         {% endif %}
@@ -157,6 +159,31 @@
         display: flex;
         gap: 10px;
     }
+
+    /* Updated Upload Button Style to Match Screenshot */
+    .upload-button {
+        background-color: #0d6efd;
+        color: white;
+        padding: 8px 15px;
+        border-radius: 4px;
+        font-weight: 500;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        transition: background-color 0.2s;
+    }
+
+    .upload-button:hover {
+        background-color: #0b5ed7;
+        text-decoration: none;
+        color: white;
+    }
+
+    .upload-button i {
+        font-size: 16px;
+    }
+
     .filters-bar {
         display: flex;
         justify-content: space-between;
@@ -357,30 +384,28 @@
 </style>
 
 <script>
-    // Add this to the script section
-    function initiateDownload(url) {
+    // Add this function for download handling
+    function directDownload(url) {
         showLoader();
 
-        // Create a hidden iframe for download
-        const downloadFrame = document.createElement('iframe');
-        downloadFrame.style.display = 'none';
-        downloadFrame.id = 'downloadFrame';
-        document.body.appendChild(downloadFrame);
+        // Create a hidden link for download
+        const link = document.createElement('a');
+        link.style.display = 'none';
+        link.href = url;
+        document.body.appendChild(link);
 
-        // Set up an event listener to detect when navigation completes
-        downloadFrame.onload = function() {
-            // Hide the loader after a slight delay to ensure file download is initiated
+        // Trigger the download
+        link.click();
+
+        // Clean up
+        setTimeout(function() {
+            document.body.removeChild(link);
             setTimeout(function() {
                 hideLoader();
-                // Clean up the iframe
-                document.body.removeChild(downloadFrame);
             }, 2000);
-        };
+        }, 100);
 
-        // Navigate to download URL
-        downloadFrame.src = url;
-
-        return false; // Prevent default link behavior
+        return false;
     }
 </script>
 {% endblock %}
