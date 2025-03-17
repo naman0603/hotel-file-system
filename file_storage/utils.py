@@ -130,92 +130,144 @@ class FileChunker:
         return chunks
 
     def _create_replicas(self, chunk, nodes):
-        """Create replicas for this chunk on other available nodes"""
-        # Skip replicas if we don't have enough nodes
-        if len(nodes) <= 1:
-            logger.warning("Not enough nodes for replication")
-            return
-
+        """Create replicas for this chunk on all other nodes, track offline ones for later"""
         # Skip if chunk has no node
         if chunk.node is None:
             logger.warning(f"Chunk {chunk.id} has no node assigned, skipping replication")
             return
 
-        # Only create replicas on active nodes that don't already have this chunk
-        replica_nodes = []
-        for node in nodes:
-            if node is not None and node.id != chunk.node.id:
-                # Verify node is actually available
-                if NodeManager.check_node_availability(node):
-                    replica_nodes.append(node)
+        # Get all active nodes (even offline ones)
+        all_nodes = FileNode.objects.filter(status='active')
 
-        if not replica_nodes:
-            logger.warning(f"No available nodes for replication of chunk {chunk.id}")
-            return
+        # Process each node
+        for node in all_nodes:
+            # Skip the original chunk's node
+            if node.id == chunk.node.id:
+                continue
 
-        for replica_node in replica_nodes:
-            try:
-                # Check if a replica already exists for this node
-                existing_replica = FileChunk.objects.filter(
-                    file=chunk.file,
-                    chunk_number=chunk.chunk_number,
-                    is_replica=True,
-                    node=replica_node
-                ).exists()
+            # Check if a replica already exists for this node
+            existing_replica = FileChunk.objects.filter(
+                file=chunk.file,
+                chunk_number=chunk.chunk_number,
+                is_replica=True,
+                node=node
+            ).exists()
 
-                if existing_replica:
-                    logger.info(f"Replica already exists on node {replica_node.name} for chunk {chunk.id}")
-                    continue
+            if existing_replica:
+                logger.info(f"Replica already exists on node {node.name} for chunk {chunk.id}")
+                continue
 
-                with transaction.atomic():
-                    # Get source client
-                    source_client = NodeManager.get_node_client(chunk.node)
+            # Check if node is available
+            node_available = False
+            for available_node in nodes:
+                if available_node.id == node.id:
+                    node_available = True
+                    break
 
-                    if source_client is None:
-                        logger.error(f"Failed to get client for source node {chunk.node.name}")
-                        continue
+            if node_available:
+                # Create replica now
+                try:
+                    with transaction.atomic():
+                        # Get source client
+                        source_client = NodeManager.get_node_client(chunk.node)
 
-                    # Read the original chunk
-                    response = source_client.get_object(chunk.node.bucket_name, chunk.storage_path)
-                    chunk_data = response.read()
+                        if source_client is None:
+                            logger.error(f"Failed to get client for source node {chunk.node.name}")
+                            # Create pending replication record
+                            from file_storage.models import PendingReplication
+                            PendingReplication.objects.get_or_create(
+                                chunk=chunk,
+                                target_node=node
+                            )
+                            logger.info(
+                                f"Created pending replication for chunk {chunk.id} on node {node.name} due to source client error")
+                            continue
 
-                    # Verify checksum
-                    chunk_hash = hashlib.sha256(chunk_data).hexdigest()
-                    if chunk_hash != chunk.checksum:
-                        logger.error(f"Checksum mismatch when reading chunk {chunk.id} for replication")
-                        continue
+                        # Read the original chunk
+                        try:
+                            response = source_client.get_object(chunk.node.bucket_name, chunk.storage_path)
+                            chunk_data = response.read()
+                        except Exception as e:
+                            logger.error(f"Error reading chunk from {chunk.node.name}: {str(e)}")
+                            # Create pending replication record
+                            from file_storage.models import PendingReplication
+                            PendingReplication.objects.get_or_create(
+                                chunk=chunk,
+                                target_node=node
+                            )
+                            logger.info(
+                                f"Created pending replication for chunk {chunk.id} on node {node.name} due to read error")
+                            continue
 
-                    # Create replica on target node
-                    replica_path = f"replicas/{chunk.file.uploader.username}/{chunk.file.id}_{chunk.chunk_number}_{uuid.uuid4().hex}.chunk"
-                    replica_client = NodeManager.get_node_client(replica_node)
+                        # Verify checksum
+                        chunk_hash = hashlib.sha256(chunk_data).hexdigest()
+                        if chunk_hash != chunk.checksum:
+                            logger.error(f"Checksum mismatch when reading chunk {chunk.id} for replication")
+                            # Create pending replication record
+                            from file_storage.models import PendingReplication
+                            PendingReplication.objects.get_or_create(
+                                chunk=chunk,
+                                target_node=node
+                            )
+                            logger.info(
+                                f"Created pending replication for chunk {chunk.id} on node {node.name} due to checksum mismatch")
+                            continue
 
-                    if replica_client is None:
-                        logger.error(f"Failed to get client for replica node {replica_node.name}")
-                        continue
+                        # Create replica on target node
+                        replica_path = f"replicas/{chunk.file.uploader.username}/{chunk.file.id}_{chunk.chunk_number}_{uuid.uuid4().hex}.chunk"
+                        replica_client = NodeManager.get_node_client(node)
 
-                    from io import BytesIO
-                    replica_client.put_object(
-                        bucket_name=replica_node.bucket_name,
-                        object_name=replica_path,
-                        data=BytesIO(chunk_data),
-                        length=len(chunk_data)
+                        if replica_client is None:
+                            logger.error(f"Failed to get client for replica node {node.name}")
+                            # Create pending replication record
+                            from file_storage.models import PendingReplication
+                            PendingReplication.objects.get_or_create(
+                                chunk=chunk,
+                                target_node=node
+                            )
+                            logger.info(
+                                f"Created pending replication for chunk {chunk.id} on node {node.name} due to replica client error")
+                            continue
+
+                        from io import BytesIO
+                        replica_client.put_object(
+                            bucket_name=node.bucket_name,
+                            object_name=replica_path,
+                            data=BytesIO(chunk_data),
+                            length=len(chunk_data)
+                        )
+
+                        # Create replica record
+                        FileChunk.objects.create(
+                            file=chunk.file,
+                            chunk_number=chunk.chunk_number,
+                            size_bytes=chunk.size_bytes,
+                            checksum=chunk.checksum,
+                            storage_path=replica_path,
+                            node=node,
+                            is_replica=True,
+                            status=ChunkStatus.UPLOADED
+                        )
+
+                        logger.info(f"Created replica for chunk {chunk.id} on node {node.name}")
+                except Exception as e:
+                    logger.error(f"Failed to create replica on node {node.name}: {str(e)}")
+                    # Create pending replication record
+                    from file_storage.models import PendingReplication
+                    PendingReplication.objects.get_or_create(
+                        chunk=chunk,
+                        target_node=node
                     )
-
-                    # Create replica record
-                    FileChunk.objects.create(
-                        file=chunk.file,
-                        chunk_number=chunk.chunk_number,
-                        size_bytes=chunk.size_bytes,
-                        checksum=chunk.checksum,
-                        storage_path=replica_path,
-                        node=replica_node,
-                        is_replica=True,
-                        status=ChunkStatus.UPLOADED
-                    )
-
-                    logger.info(f"Created replica for chunk {chunk.id} on node {replica_node.name}")
-            except Exception as e:
-                logger.error(f"Failed to create replica on node {replica_node.name}: {str(e)}")
+                    logger.info(
+                        f"Created pending replication for chunk {chunk.id} on node {node.name} due to exception: {str(e)}")
+            else:
+                # Node is offline, create pending replication record
+                from file_storage.models import PendingReplication
+                PendingReplication.objects.get_or_create(
+                    chunk=chunk,
+                    target_node=node
+                )
+                logger.info(f"Created pending replication for chunk {chunk.id} on offline node {node.name}")
 
     def _cleanup_partial_upload(self, chunks):
         """Clean up storage after a failed upload"""
@@ -228,11 +280,6 @@ class FileChunker:
                 chunk.delete()
             except Exception as e:
                 logger.error(f"Error cleaning up chunk {chunk.id}: {str(e)}")
-
-    # In file_storage/utils.py
-
-    # In file_storage/utils.py
-
     def reassemble_file_optimized(self, stored_file):
         """
         Reassemble a file from its chunks with comprehensive failover support

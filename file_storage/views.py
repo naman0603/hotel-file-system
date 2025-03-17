@@ -402,13 +402,14 @@ def upload_file(request):
 
     # Check server availability before processing the form
     available_nodes_count = NodeManager.get_available_nodes_count()
+    minimum_nodes_required = 3  # Updated from 2 to 3
 
     if request.method == 'POST':
         # Check if we have enough nodes available before processing the upload
-        if available_nodes_count < 2:
+        if available_nodes_count < minimum_nodes_required:
             messages.error(
                 request,
-                'Not enough storage servers are currently available (minimum 2 required). '
+                f'Not enough storage servers are currently available (minimum {minimum_nodes_required} required). '
                 'Please try again later.'
             )
             return redirect('file_storage:dashboard')
@@ -492,8 +493,8 @@ def upload_file(request):
     context = {
         'form': form,
         'available_nodes': available_nodes_count,
-        'minimum_nodes_required': 2,
-        'servers_ready': available_nodes_count >= 2
+        'minimum_nodes_required': minimum_nodes_required,
+        'servers_ready': available_nodes_count >= minimum_nodes_required
     }
 
     return render(request, 'file_storage/upload.html', context)

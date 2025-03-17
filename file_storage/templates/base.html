@@ -135,6 +135,83 @@
         .logout-btn:hover {
             color: #0056b3;
         }
+
+        /* Loading animation styles */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            color: white;
+            display: none;
+        }
+
+        .loading-overlay.active {
+            display: flex;
+        }
+
+        .spinner {
+            width: 70px;
+            height: 70px;
+            border: 8px solid #f3f3f3;
+            border-top: 8px solid #007bff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            font-size: 18px;
+            text-align: center;
+            max-width: 80%;
+            margin-bottom: 10px;
+        }
+
+        .loading-subtext {
+            font-size: 14px;
+            text-align: center;
+            color: #ccc;
+            max-width: 80%;
+        }
+
+        /* Add progress bar styles */
+        .progress-container {
+            width: 80%;
+            margin-top: 20px;
+        }
+
+        .progress-bar {
+            height: 10px;
+            background-color: rgba(255, 255, 255, 0.3);
+            border-radius: 5px;
+            overflow: hidden;
+            margin-bottom: 5px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background-color: #4CAF50;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            color: white;
+            font-size: 14px;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -180,5 +257,128 @@
 
     <footer>
     </footer>
+
+    <!-- Loading Overlay with Enhanced Progress Indicator -->
+    <div id="loadingOverlay" class="loading-overlay">
+        <div class="spinner"></div>
+        <p class="loading-text">Retrieving file from distributed storage...</p>
+        <p class="loading-subtext">This may take a moment as the system locates your file across available servers.</p>
+        <div class="progress-container">
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+            </div>
+            <p id="progressText" class="progress-text">Preparing download...</p>
+        </div>
+    </div>
+
+    <script>
+        // Global variable to track download state
+        let downloadInProgress = false;
+
+        // Function to show loading overlay with progress indicators
+        function showLoader() {
+            document.getElementById('loadingOverlay').classList.add('active');
+            downloadInProgress = true;
+
+            // Simulate progress
+            simulateProgressForLargeDownload();
+
+            return true;  // Allow the click to continue
+        }
+
+        // Function to hide loading overlay
+        function hideLoader() {
+            document.getElementById('loadingOverlay').classList.remove('active');
+            downloadInProgress = false;
+
+            // Reset progress bar for next use
+            document.getElementById('progressFill').style.width = '0%';
+            document.getElementById('progressText').innerText = 'Preparing download...';
+        }
+
+        // Function to simulate download progress with realistic updates
+        function simulateProgressForLargeDownload() {
+            const progressFill = document.getElementById('progressFill');
+            const progressText = document.getElementById('progressText');
+            let progress = 0;
+
+            // Simulate a realistic download experience
+            const progressInterval = setInterval(() => {
+                if (!downloadInProgress) {
+                    clearInterval(progressInterval);
+                    return;
+                }
+
+                // Increment faster at beginning, slower toward end
+                if (progress < 80) {
+                    progress += Math.random() * 5;
+                } else {
+                    progress += Math.random() * 1;
+                }
+
+                if (progress > 95) {
+                    progress = 95; // Cap at 95% until actual completion
+                }
+
+                progressFill.style.width = `${progress}%`;
+
+                // Update text based on progress
+                if (progress < 30) {
+                    progressText.innerText = "Locating and verifying file chunks...";
+                } else if (progress < 60) {
+                    progressText.innerText = "Retrieving chunks from available servers...";
+                } else if (progress < 90) {
+                    progressText.innerText = "Reassembling file...";
+                } else {
+                    progressText.innerText = "Finalizing download...";
+                }
+
+            }, 250);
+
+            // When download completes, set to 100%
+            setTimeout(() => {
+                if (!downloadInProgress) {
+                    clearInterval(progressInterval);
+                    return;
+                }
+
+                // After 15 seconds, assume download will be completed soon
+                if (downloadInProgress) {
+                    progressFill.style.width = "100%";
+                    progressText.innerText = "Download complete! Starting file save...";
+
+                    // Allow file download to start
+                    setTimeout(() => {
+                        hideLoader();
+                    }, 1000);
+                }
+            }, 15000);
+        }
+
+        // Function to check if download has started
+        function checkDownloadStatus() {
+            if (!downloadInProgress) return;
+
+            // After a reasonable time, if we're still on the same page, the download likely started
+            // This is because file downloads don't navigate away from the current page
+            setTimeout(function() {
+                if (downloadInProgress) {
+                    hideLoader();
+                }
+            }, 3000);  // 3 seconds should be enough for most downloads to start
+
+            // Fallback for very slow connections or errors
+            setTimeout(function() {
+                if (downloadInProgress) {
+                    hideLoader();
+                }
+            }, 15000);  // 15 seconds maximum wait time
+        }
+
+        // On page load, make sure the loader is hidden
+        document.addEventListener('DOMContentLoaded', function() {
+            hideLoader();
+        });
+    </script>
 </body>
 </html>

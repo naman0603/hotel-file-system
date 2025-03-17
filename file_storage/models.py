@@ -108,3 +108,18 @@ class FileChunk(models.Model):
             self.status = ChunkStatus.FAILED
             self.save()
             return False
+
+
+class PendingReplication(models.Model):
+    """Tracks chunks that need replication to offline nodes"""
+    chunk = models.ForeignKey(FileChunk, on_delete=models.CASCADE, related_name='pending_replications')
+    target_node = models.ForeignKey(FileNode, on_delete=models.CASCADE, related_name='pending_replications')
+    created_at = models.DateTimeField(auto_now_add=True)
+    attempts = models.IntegerField(default=0)
+    last_attempt = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ('chunk', 'target_node')
+
+    def __str__(self):
+        return f"Replication of {self.chunk} to {self.target_node.name}"

@@ -183,6 +183,20 @@ MINIO_STORAGE_BACKENDS = {
         'BUCKET_NAME': 'hotel-files',
         'SECURE': False,
     },
+    'node4': {
+        'ENDPOINT': 'localhost:9004',
+        'ACCESS_KEY': 'minioadmin',
+        'SECRET_KEY': 'minioadmin',
+        'BUCKET_NAME': 'hotel-files',
+        'SECURE': False,
+    },
+    'node5': {
+        'ENDPOINT': 'localhost:9005',
+        'ACCESS_KEY': 'minioadmin',
+        'SECRET_KEY': 'minioadmin',
+        'BUCKET_NAME': 'hotel-files',
+        'SECURE': False,
+    },
 }
 
 # Install the required cache configuration

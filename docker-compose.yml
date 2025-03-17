@@ -10,6 +10,8 @@ services:
       - minio1
       - minio2
       - minio3
+      - minio4
+      - minio5
 
   db:
     image: postgres:13
@@ -56,8 +58,34 @@ services:
       - MINIO_ROOT_PASSWORD=minioadmin
     command: server --console-address ":9090" /data
 
+  minio4:
+    image: minio/minio
+    ports:
+      - "9004:9000"
+      - "9094:9090"
+    volumes:
+      - minio_data4:/data
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    command: server --console-address ":9090" /data
+
+  minio5:
+    image: minio/minio
+    ports:
+      - "9005:9000"
+      - "9095:9090"
+    volumes:
+      - minio_data5:/data
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    command: server --console-address ":9090" /data
+
 volumes:
   postgres_data:
   minio_data1:
   minio_data2:
   minio_data3:
+  minio_data4:
+  minio_data5:

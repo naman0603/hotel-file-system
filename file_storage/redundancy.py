@@ -389,3 +389,102 @@ class RedundancyManager:
                 break
 
         return can_recover, list(missing), corrupt
+
+    # In file_storage/redundancy.py, add this method to RedundancyManager class
+
+    def create_replica_on_node(self, chunk, target_node):
+        """
+        Create a replica of a chunk on a specific node
+
+        Args:
+            chunk: FileChunk instance to replicate
+            target_node: FileNode instance where replica should be created
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        # Skip if the chunk is already a replica
+        if chunk.is_replica:
+            logger.warning(f"Cannot create replica from replica {chunk.id}")
+            return False
+
+        # Skip non-uploaded chunks
+        if chunk.status != ChunkStatus.UPLOADED:
+            logger.warning(f"Cannot create replica for chunk {chunk.id} with status {chunk.status}")
+            return False
+
+        # Skip if node is invalid
+        if target_node is None or not hasattr(target_node, 'id'):
+            logger.error(f"Invalid target node for creating replica of chunk {chunk.id}")
+            return False
+
+        # Check if replica already exists
+        existing_replica = FileChunk.objects.filter(
+            file=chunk.file,
+            chunk_number=chunk.chunk_number,
+            is_replica=True,
+            node=target_node
+        ).exists()
+
+        if existing_replica:
+            logger.info(f"Replica already exists for chunk {chunk.id} on node {target_node.name}")
+            return True
+
+        try:
+            # Verify source node
+            if chunk.node is None:
+                logger.error(f"Source node is None for chunk {chunk.id}")
+                return False
+
+            # Get source client
+            source_client = NodeManager.get_node_client(chunk.node)
+            if source_client is None:
+                logger.error(f"Failed to get client for source node {chunk.node.name}")
+                return False
+
+            # Get destination client
+            dest_client = NodeManager.get_node_client(target_node)
+            if dest_client is None:
+                logger.error(f"Failed to get client for destination node {target_node.name}")
+                return False
+
+            # Read the chunk data
+            response = source_client.get_object(chunk.node.bucket_name, chunk.storage_path)
+            chunk_data = response.read()
+
+            # Verify integrity
+            chunk_hash = hashlib.sha256(chunk_data).hexdigest()
+            if chunk_hash != chunk.checksum:
+                logger.error(f"Source chunk {chunk.id} is corrupted, cannot replicate")
+                return False
+
+            # Create a new path for the replica
+            replica_path = f"replicas/{chunk.file.uploader.username}/{chunk.file.id}_{chunk.chunk_number}_{uuid.uuid4().hex}.chunk"
+
+            # Upload to destination
+            from io import BytesIO
+            dest_client.put_object(
+                bucket_name=target_node.bucket_name,
+                object_name=replica_path,
+                data=BytesIO(chunk_data),
+                length=len(chunk_data)
+            )
+
+            # Create replica record
+            FileChunk.objects.create(
+                file=chunk.file,
+                chunk_number=chunk.chunk_number,
+                size_bytes=chunk.size_bytes,
+                checksum=chunk.checksum,
+                storage_path=replica_path,
+                node=target_node,
+                is_replica=True,
+                status=ChunkStatus.UPLOADED
+            )
+
+            logger.info(f"Successfully created replica for chunk {chunk.id} on node {target_node.name}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error creating replica on node {target_node.name}: {str(e)}")
+            return False
