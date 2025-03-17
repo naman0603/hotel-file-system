@@ -1,142 +1,891 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="analytics-dashboard">
-    <h1>File Analytics Dashboard</h1>
-    
-    <div class="summary-stats">
-        <div class="stat-box">
-            <h3>Total Files</h3>
-            <p>{{ total_files }}</p>
+<div class="dashboard-container">
+    <div class="dashboard-header">
+        <h1>File Analytics Dashboard</h1>
+    </div>
+
+    <div class="stats-overview">
+        <div class="stat-card total-files">
+            <div class="stat-icon">
+                <i class="fas fa-file-alt"></i>
+            </div>
+            <div class="stat-info">
+                <h3>Total Files</h3>
+                <div class="stat-value">{{ total_files }}</div>
+            </div>
         </div>
-        <div class="stat-box">
-            <h3>Cached Files</h3>
-            <p>{{ cached_files }} / {{ total_files }}</p>
+
+        <div class="stat-card cached-files">
+            <div class="stat-icon">
+                <i class="fas fa-bolt"></i>
+            </div>
+            <div class="stat-info">
+                <h3>Cached Files</h3>
+                <div class="stat-value">{{ cached_files }} / {{ total_files }}</div>
+                <div class="stat-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: {% widthratio cached_files total_files 100 %}%"></div>
+                    </div>
+                    <div class="progress-text">{% widthratio cached_files total_files 100 %}% cached</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="stat-card file-access">
+            <div class="stat-icon">
+                <i class="fas fa-eye"></i>
+            </div>
+            <div class="stat-info">
+                <h3>Total Access</h3>
+                <div class="stat-value">{{ total_access_count }}</div>
+            </div>
         </div>
     </div>
-    
-    <div class="files-section">
-        <h2>File Access Analytics</h2>
-        
-        {% if file_stats %}
-            <table class="files-table">
+
+    <div class="analytics-section">
+        <div class="section-header">
+            <h2>File Access Analytics</h2>
+            <div class="search-container">
+                <input type="text" id="fileSearch" placeholder="Search files..." class="search-input">
+                <i class="fas fa-search search-icon"></i>
+            </div>
+        </div>
+
+        <div class="table-container">
+            <table class="analytics-table">
                 <thead>
                     <tr>
-                        <th>File Name</th>
-                        <th>Size</th>
-                        <th>Access Count</th>
-                        <th>Last Accessed</th>
-                        <th>Cached</th>
-                        <th>Chunks</th>
+                        <th class="sortable" onclick="sortTable(0)">File Name <i class="fas fa-sort"></i></th>
+                        <th class="sortable" onclick="sortTable(1)">Size <i class="fas fa-sort"></i></th>
+                        <th class="sortable" onclick="sortTable(2)">Access Count <i class="fas fa-sort"></i></th>
+                        <th class="sortable" onclick="sortTable(3)">Last Accessed <i class="fas fa-sort"></i></th>
+                        <th class="sortable" onclick="sortTable(4)">Chunks <i class="fas fa-sort"></i></th>
+                        <th>Cache Status</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="filesTableBody">
                     {% for stat in file_stats %}
                     <tr>
                         <td>
-                            <a href="{% url 'file_storage:file_details' stat.file.id %}">{{ stat.file.name }}</a>
+                            <div class="file-cell">
+                                {% if '.pdf' in stat.file.file_type %}
+                                <i class="far fa-file-pdf file-icon pdf"></i>
+                                {% elif '.doc' in stat.file.file_type or '.docx' in stat.file.file_type %}
+                                <i class="far fa-file-word file-icon word"></i>
+                                {% elif '.xls' in stat.file.file_type or '.xlsx' in stat.file.file_type %}
+                                <i class="far fa-file-excel file-icon excel"></i>
+                                {% elif '.jpg' in stat.file.file_type or '.jpeg' in stat.file.file_type or '.png' in stat.file.file_type %}
+                                <i class="far fa-file-image file-icon image"></i>
+                                {% else %}
+                                <i class="far fa-file file-icon"></i>
+                                {% endif %}
+                                <a href="{% url 'file_storage:file_details' stat.file.id %}">{{ stat.file.name }}</a>
+                            </div>
                         </td>
                         <td>{{ stat.file.size_bytes|filesizeformat }}</td>
-                        <td>{{ stat.access_count }}</td>
-                        <td>{{ stat.last_accessed|default:"Never" }}</td>
                         <td>
-                            {% if stat.is_cached %}
-                                <span class="status-badge health-healthy">Yes</span>
-                            {% else %}
-                                <span class="status-badge health-inactive">No</span>
-                            {% endif %}
+                            <div class="access-count">
+                                <span class="count-value">{{ stat.access_count }}</span>
+                                <div class="count-bar" style="width: {% widthratio stat.access_count max_access_count 100 %}%"></div>
+                            </div>
                         </td>
+                        <td>{{ stat.last_accessed|default:"Never" }}</td>
                         <td>{{ stat.chunk_count }}</td>
                         <td>
-                            <a href="{% url 'file_storage:download_file' stat.file.id %}" class="btn">Download</a>
-                            {% if not stat.is_cached %}
-                                <a href="{% url 'file_storage:cache_file' stat.file.id %}" class="btn btn-secondary">Cache</a>
+                            {% if stat.is_cached %}
+                                <span class="status-badge status-cached">Cached</span>
+                            {% else %}
+                                <span class="status-badge status-not-cached">Not Cached</span>
                             {% endif %}
+                        </td>
+                        <td class="actions-cell">
+                            <div class="action-buttons">
+                                <a href="javascript:void(0);" onclick="downloadFile('{% url 'file_storage:download_file' stat.file.id %}');" class="action-btn download-btn" title="Download">
+                                    <i class="fas fa-download"></i>
+                                </a>
+                                {% if not stat.is_cached %}
+                                <a href="{% url 'file_storage:cache_file' stat.file.id %}" class="action-btn cache-btn" title="Cache">
+                                    <i class="fas fa-bolt"></i>
+                                </a>
+                                {% endif %}
+                            </div>
                         </td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
-        {% else %}
-            <p>No files found.</p>
-        {% endif %}
+        </div>
+    </div>
+
+    <div class="insights-section">
+        <h2>Access Insights</h2>
+        <div class="insights-grid">
+            <div class="insight-card">
+                <h3>Most Accessed Files</h3>
+                <ul class="top-files-list">
+                    {% for file in most_accessed_files %}
+                    <li>
+                        <span class="file-name">{{ file.name }}</span>
+                        <div class="file-access-info">
+                            <span class="access-number">{{ file.access_count }}</span>
+                            <div class="access-bar" style="width: {% widthratio file.access_count max_access_count 100 %}%"></div>
+                        </div>
+                    </li>
+                    {% empty %}
+                    <li class="empty-list">No access data available</li>
+                    {% endfor %}
+                </ul>
+            </div>
+
+            <div class="insight-card">
+                <h3>Recently Accessed</h3>
+                <ul class="recent-files-list">
+                    {% for file in recently_accessed_files %}
+                    <li>
+                        <span class="file-name">{{ file.name }}</span>
+                        <span class="access-time">{{ file.last_accessed|date:"M d, g:i a" }}</span>
+                    </li>
+                    {% empty %}
+                    <li class="empty-list">No recent access data available</li>
+                    {% endfor %}
+                </ul>
+            </div>
+
+            <div class="insight-card">
+                <h3>Cache Efficiency</h3>
+                <div class="cache-stats">
+                    <div class="cache-stat">
+                        <span class="stat-label">Cache Hit Rate</span>
+                        <div class="cache-progress">
+                            <div class="cache-progress-bar" style="width: {{ cache_hit_rate }}%"></div>
+                            <span class="cache-percentage">{{ cache_hit_rate }}%</span>
+                        </div>
+                    </div>
+                    <div class="cache-stat">
+                        <span class="stat-label">Space Utilized</span>
+                        <div class="cache-progress">
+                            <div class="cache-progress-bar" style="width: {{ cache_space_utilization }}%"></div>
+                            <span class="cache-percentage">{{ cache_space_utilization }}%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Loading Overlay with Enhanced Progress Indicator -->
+<div id="loadingOverlay" class="loading-overlay">
+    <div class="spinner"></div>
+    <p class="loading-text">Retrieving file from distributed storage...</p>
+    <p class="loading-subtext">This may take a moment as the system locates your file across available servers.</p>
+    <div class="progress-container">
+        <div class="progress-bar">
+            <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+        </div>
+        <p id="progressText" class="progress-text">Preparing download...</p>
     </div>
 </div>
 
 <style>
-    .analytics-dashboard {
+    .dashboard-container {
         max-width: 1200px;
         margin: 0 auto;
+        padding: 20px;
     }
-    .summary-stats {
-        display: flex;
+
+    .dashboard-header {
+        margin-bottom: 30px;
+    }
+
+    .dashboard-header h1 {
+        margin: 0;
+        color: #333;
+        font-size: 28px;
+    }
+
+    .stats-overview {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
         gap: 20px;
         margin-bottom: 30px;
     }
-    .stat-box {
+
+    .stat-card {
         background: white;
+        border-radius: 10px;
         padding: 20px;
-        border-radius: 5px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        display: flex;
+        align-items: center;
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    .stat-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+    }
+
+    .total-files {
+        border-left: 4px solid #2196F3;
+    }
+
+    .cached-files {
+        border-left: 4px solid #4CAF50;
+    }
+
+    .file-access {
+        border-left: 4px solid #FF9800;
+    }
+
+    .stat-icon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        margin-right: 15px;
+        color: white;
+        font-size: 24px;
+    }
+
+    .total-files .stat-icon {
+        background-color: #2196F3;
+    }
+
+    .cached-files .stat-icon {
+        background-color: #4CAF50;
+    }
+
+    .file-access .stat-icon {
+        background-color: #FF9800;
+    }
+
+    .stat-info {
         flex: 1;
-        text-align: center;
     }
-    .stat-box h3 {
-        margin-top: 0;
-        color: #555;
+
+    .stat-info h3 {
+        margin: 0 0 5px 0;
+        font-size: 1rem;
+        color: #666;
     }
-    .stat-box p {
-        font-size: 2em;
-        margin: 10px 0 0;
-        font-weight: bold;
+
+    .stat-value {
+        font-size: 1.8rem;
+        font-weight: 700;
+        color: #333;
+        margin-bottom: 5px;
     }
-    .files-section {
+
+    .stat-progress {
+        margin-top: 8px;
+    }
+
+    .progress-bar {
+        height: 8px;
+        background-color: #e9ecef;
+        border-radius: 4px;
+        overflow: hidden;
+        margin-bottom: 5px;
+    }
+
+    .progress-fill {
+        height: 100%;
+        background-color: #4CAF50;
+        border-radius: 4px;
+    }
+
+    .progress-text {
+        font-size: 0.8rem;
+        color: #666;
+    }
+
+    .analytics-section, .insights-section {
         background: white;
+        border-radius: 10px;
         padding: 20px;
-        border-radius: 5px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
         margin-bottom: 30px;
     }
-    .files-table {
+
+    .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+
+    .section-header h2 {
+        margin: 0;
+        color: #333;
+        font-size: 20px;
+    }
+
+    .search-container {
+        position: relative;
+        width: 300px;
+    }
+
+    .search-input {
+        width: 100%;
+        padding: 10px 15px 10px 40px;
+        border-radius: 20px;
+        border: 1px solid #ddd;
+        font-size: 14px;
+        transition: all 0.3s ease;
+    }
+
+    .search-input:focus {
+        border-color: #2196F3;
+        box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.2);
+        outline: none;
+    }
+
+    .search-icon {
+        position: absolute;
+        left: 15px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: #777;
+    }
+
+    .table-container {
+        overflow-x: auto;
+        border-radius: 8px;
+    }
+
+    .analytics-table {
         width: 100%;
         border-collapse: collapse;
     }
-    .files-table th, .files-table td {
-        padding: 10px;
-        text-align: left;
-        border-bottom: 1px solid #eee;
-    }
-    .files-table th {
+
+    .analytics-table th {
         background-color: #f8f9fa;
-        border-bottom: 2px solid #ddd;
+        padding: 12px 15px;
+        text-align: left;
+        color: #495057;
+        font-weight: 600;
+        border-bottom: 2px solid #e9ecef;
+        white-space: nowrap;
     }
+
+    .analytics-table td {
+        padding: 12px 15px;
+        border-bottom: 1px solid #e9ecef;
+        color: #333;
+    }
+
+    .analytics-table tr:hover {
+        background-color: #f8f9fa;
+    }
+
+    .file-cell {
+        display: flex;
+        align-items: center;
+    }
+
+    .file-icon {
+        font-size: 1.2rem;
+        margin-right: 12px;
+    }
+
+    .file-icon.pdf {
+        color: #e74c3c;
+    }
+
+    .file-icon.word {
+        color: #2980b9;
+    }
+
+    .file-icon.excel {
+        color: #27ae60;
+    }
+
+    .file-icon.image {
+        color: #8e44ad;
+    }
+
+    .access-count {
+        position: relative;
+        display: flex;
+        align-items: center;
+    }
+
+    .count-value {
+        position: relative;
+        z-index: 1;
+        font-weight: 500;
+    }
+
+    .count-bar {
+        position: absolute;
+        height: 24px;
+        background-color: rgba(33, 150, 243, 0.15);
+        border-radius: 4px;
+        left: -5px;
+        top: -3px;
+        min-width: 30px;
+    }
+
     .status-badge {
         display: inline-block;
-        padding: 3px 8px;
-        border-radius: 12px;
-        font-size: 0.8em;
-        font-weight: bold;
+        padding: 4px 8px;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 500;
     }
-    .health-healthy {
+
+    .status-cached {
         background-color: #d4edda;
         color: #155724;
     }
-    .health-inactive {
-        background-color: #e9ecef;
+
+    .status-not-cached {
+        background-color: #f8f9fa;
         color: #6c757d;
     }
-    .btn {
-        display: inline-block;
-        padding: 5px 10px;
-        background: #007bff;
-        color: white;
-        text-decoration: none;
-        border-radius: 3px;
-        margin-right: 5px;
+
+    .actions-cell {
+        white-space: nowrap;
     }
-    .btn-secondary {
-        background: #6c757d;
+
+    .action-buttons {
+        display: flex;
+        gap: 8px;
+    }
+
+    .action-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        height: 36px;
+        width: 36px;
+        border-radius: 6px;
+        color: white;
+        transition: all 0.2s;
+    }
+
+    .download-btn {
+        background-color: #2196F3;
+    }
+
+    .cache-btn {
+        background-color: #4CAF50;
+    }
+
+    .action-btn i {
+        color: white;
+        font-size: 16px;
+    }
+
+    .action-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .insights-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 20px;
+    }
+
+    .insight-card {
+        background-color: #f8f9fa;
+        border-radius: 8px;
+        padding: 15px;
+    }
+
+    .insight-card h3 {
+        margin-top: 0;
+        margin-bottom: 15px;
+        font-size: 16px;
+        color: #555;
+        border-bottom: 1px solid #e9ecef;
+        padding-bottom: 10px;
+    }
+
+    .top-files-list, .recent-files-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    .top-files-list li, .recent-files-list li {
+        margin-bottom: 10px;
+        padding: 8px;
+        border-radius: 4px;
+    }
+
+    .top-files-list li:hover, .recent-files-list li:hover {
+        background-color: #e9ecef;
+    }
+
+    .file-name {
+        font-weight: 500;
+        display: block;
+        margin-bottom: 5px;
+    }
+
+    .file-access-info {
+        display: flex;
+        align-items: center;
+    }
+
+    .access-number {
+        font-size: 0.9rem;
+        font-weight: 500;
+        color: #666;
+        margin-right: 10px;
+    }
+
+    .access-bar {
+        height: 6px;
+        background-color: #2196F3;
+        border-radius: 3px;
+    }
+
+    .access-time {
+        font-size: 0.8rem;
+        color: #666;
+    }
+
+    .empty-list {
+        color: #6c757d;
+        font-style: italic;
+        text-align: center;
+    }
+
+    .cache-stats {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+    }
+
+    .cache-stat {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .stat-label {
+        font-size: 0.9rem;
+        color: #666;
+        margin-bottom: 5px;
+    }
+
+    .cache-progress {
+        height: 24px;
+        background-color: #e9ecef;
+        border-radius: 4px;
+        position: relative;
+    }
+
+    .cache-progress-bar {
+        height: 100%;
+        background-color: #2196F3;
+        border-radius: 4px;
+    }
+
+    .cache-percentage {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.9rem;
+        font-weight: 500;
+        color: #333;
+    }
+
+    .sortable {
+        cursor: pointer;
+    }
+
+    .sortable:hover {
+        background-color: #e9ecef;
+    }
+
+    /* Loading overlay styles */
+    .loading-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.7);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
+        color: white;
+        display: none;
+    }
+
+    .loading-overlay.active {
+        display: flex;
+    }
+
+    .spinner {
+        width: 70px;
+        height: 70px;
+        border: 8px solid #f3f3f3;
+        border-top: 8px solid #2196F3;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin-bottom: 20px;
+    }
+
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+
+    .loading-text {
+        font-size: 18px;
+        text-align: center;
+        max-width: 80%;
+        margin-bottom: 10px;
+    }
+
+    .loading-subtext {
+        font-size: 14px;
+        text-align: center;
+        color: #ccc;
+        max-width: 80%;
+    }
+
+    .progress-container {
+        width: 80%;
+        margin-top: 20px;
+    }
+
+    .progress-bar {
+        height: 10px;
+        background-color: rgba(255, 255, 255, 0.3);
+        border-radius: 5px;
+        overflow: hidden;
+        margin-bottom: 5px;
+    }
+
+    .progress-fill {
+        height: 100%;
+        background-color: #4CAF50;
+        width: 0%;
+        transition: width 0.3s ease;
+    }
+
+    .progress-text {
+        color: white;
+        font-size: 14px;
+        text-align: center;
+    }
+
+    @media (max-width: 768px) {
+        .section-header {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 15px;
+        }
+
+        .search-container {
+            width: 100%;
+        }
+
+        .insights-grid {
+            grid-template-columns: 1fr;
+        }
     }
 </style>
+
+<script>
+    // Global variable to track download state
+    let downloadInProgress = false;
+
+    // Function to download file with loading animation
+    function downloadFile(url) {
+        showLoader();
+
+        // Create a hidden iframe to handle the download
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        document.body.appendChild(iframe);
+
+        // Set the src to trigger the download
+        iframe.src = url;
+
+        // Clean up after a delay
+        setTimeout(() => {
+            document.body.removeChild(iframe);
+            setTimeout(() => {
+                hideLoader();
+            }, 3000);
+        }, 1000);
+    }
+
+    // Function to show loading overlay with progress indicators
+    function showLoader() {
+        document.getElementById('loadingOverlay').classList.add('active');
+        downloadInProgress = true;
+
+        // Simulate progress
+        simulateProgressForLargeDownload();
+
+        return true;  // Allow the click to continue
+    }
+
+    // Function to hide loading overlay
+    function hideLoader() {
+        document.getElementById('loadingOverlay').classList.remove('active');
+        downloadInProgress = false;
+
+        // Reset progress bar for next use
+        document.getElementById('progressFill').style.width = '0%';
+        document.getElementById('progressText').innerText = 'Preparing download...';
+    }
+
+    // Function to simulate download progress with realistic updates
+    function simulateProgressForLargeDownload() {
+        const progressFill = document.getElementById('progressFill');
+        const progressText = document.getElementById('progressText');
+        let progress = 0;
+
+        // Simulate a realistic download experience
+        const progressInterval = setInterval(() => {
+            if (!downloadInProgress) {
+                clearInterval(progressInterval);
+                return;
+            }
+
+            // Increment faster at beginning, slower toward end
+            if (progress < 80) {
+                progress += Math.random() * 5;
+            } else {
+                progress += Math.random() * 1;
+            }
+
+            if (progress > 95) {
+                progress = 95; // Cap at 95% until actual completion
+            }
+
+            progressFill.style.width = `${progress}%`;
+
+            // Update text based on progress
+            if (progress < 30) {
+                progressText.innerText = "Locating and verifying file chunks...";
+            } else if (progress < 60) {
+                progressText.innerText = "Retrieving chunks from available servers...";
+            } else if (progress < 90) {
+                progressText.innerText = "Reassembling file...";
+            } else {
+                progressText.innerText = "Finalizing download...";
+            }
+
+        }, 250);
+
+        // When download completes, set to 100%
+        setTimeout(() => {
+            if (!downloadInProgress) {
+                clearInterval(progressInterval);
+                return;
+            }
+
+            // After 15 seconds, assume download will be completed soon
+            if (downloadInProgress) {
+                progressFill.style.width = "100%";
+                progressText.innerText = "Download complete! Starting file save...";
+
+                // Allow file download to start
+                setTimeout(() => {
+                    hideLoader();
+                }, 1000);
+            }
+        }, 15000);
+    }
+
+    // Search functionality
+    document.getElementById('fileSearch').addEventListener('input', function() {
+        const searchQuery = this.value.toLowerCase();
+        const tableRows = document.getElementById('filesTableBody').getElementsByTagName('tr');
+
+        for (let i = 0; i < tableRows.length; i++) {
+            const fileName = tableRows[i].getElementsByTagName('td')[0].textContent.toLowerCase();
+
+            if (fileName.includes(searchQuery)) {
+                tableRows[i].style.display = '';
+            } else {
+                tableRows[i].style.display = 'none';
+            }
+        }
+    });
+
+    // Table sorting
+    function sortTable(column) {
+        const table = document.querySelector('.analytics-table');
+        const tbody = table.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+
+        // Determine sort direction
+        const sortAsc = table.querySelector('th:nth-child(' + (column + 1) + ')').classList.contains('sort-asc');
+
+        // Reset classes on all headers
+        table.querySelectorAll('th').forEach(th => {
+            th.classList.remove('sort-asc', 'sort-desc');
+        });
+
+        // Set class for current header
+        const currentHeader = table.querySelector('th:nth-child(' + (column + 1) + ')');
+        currentHeader.classList.add(sortAsc ? 'sort-desc' : 'sort-asc');
+
+        // Sort the rows
+        rows.sort((a, b) => {
+            let x = a.querySelectorAll('td')[column].textContent.trim();
+            let y = b.querySelectorAll('td')[column].textContent.trim();
+
+            // If sorting by size, convert to bytes
+            if (column === 1) {
+                x = parseSizeToBytes(x);
+                y = parseSizeToBytes(y);
+            }
+
+            // If sorting by numbers (like access count or chunks)
+            if (column === 2 || column === 4) {
+                x = parseInt(x) || 0;
+                y = parseInt(y) || 0;
+            }
+
+            return sortAsc ?
+                (x > y ? 1 : -1) :
+                (x < y ? 1 : -1);
+        });
+
+        // Reinsert rows in new order
+        rows.forEach(row => tbody.appendChild(row));
+    }
+
+    // Helper function to convert size strings to bytes for sorting
+    function parseSizeToBytes(sizeStr) {
+        const units = {'B': 1, 'KB': 1024, 'MB': 1024*1024, 'GB': 1024*1024*1024, 'TB': 1024*1024*1024*1024};
+        const matches = sizeStr.match(/^(\d+(\.\d+)?) ?([KMGT]?B)$/i);
+
+        if (matches) {
+            const value = parseFloat(matches[1]);
+            const unit = matches[3];
+            return value * (units[unit] || 1);
+        }
+        return 0;
+    }
+
+    // On page load, make sure the loader is hidden
+    document.addEventListener('DOMContentLoaded', function() {
+        hideLoader();
+    });
+</script>
 {% endblock %}
